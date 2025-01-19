@@ -1,0 +1,32 @@
+name: Deploy to EC2
+
+on:
+  push:
+    branches:
+      - develop  # main 브랜치에 푸시할 때 트리거
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up SSH
+        uses: webfactory/ssh-agent@v0.5.3
+        with:
+          ssh-private-key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+
+      - name: Deploy to EC2
+        run: |
+          ssh -o StrictHostKeyChecking=no ubuntu@ec2-3-36-196-30.ap-northeast-2.compute.amazonaws.com << 'EOF'
+            cd /davinci/DavinciClient
+            git pull origin develop
+            docker-compose stop nextjs
+            docker-compose rm -f nextjs
+            docker-compose build nextjs
+            docker-compose up -d nextjs
+            # 추가적인 배포 명령어 작성
+          EOF
+
