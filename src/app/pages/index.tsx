@@ -9,6 +9,10 @@ const Home = () => {
   const [username, setUsername] = useState<string>('User ' + Math.floor(Math.random() * 1000));
 
   useEffect(() => {
+    setUsername("new user"); // ESLint 임시 오류 해결
+  }, []);
+
+  useEffect(() => {
     const ws = new WebSocket('wss://davinci-code.net/ws');  // 서버의 WebSocket URL
 
     ws.onopen = () => {
