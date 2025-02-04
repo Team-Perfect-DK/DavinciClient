@@ -13,7 +13,9 @@ const Home = () => {
   }, []);
 
   useEffect(() => {
-    const ws = new WebSocket('wss://davinci-code.net/ws');  // 서버의 WebSocket URL
+    const wsProtocol = window.location.protocol === "https:" ? "wss" : "ws";
+    const ws = new WebSocket(`${wsProtocol}://davinci-code.net/ws`);
+
 
     ws.onopen = () => {
       console.log("WebSocket 연결 성공");
