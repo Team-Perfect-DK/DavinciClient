@@ -14,7 +14,7 @@ const Home = () => {
 
   useEffect(() => {
     const wsProtocol = window.location.protocol === "https:" ? "wss" : "ws";
-    const ws = new WebSocket(`${wsProtocol}://api.davinci-code.net/ws`);
+    const ws = new WebSocket(`${wsProtocol}://ws.davinci-code.net/ws`);
 
 
     ws.onopen = () => {
