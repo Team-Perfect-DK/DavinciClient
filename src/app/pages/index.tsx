@@ -6,15 +6,15 @@ const Home = () => {
   const [socket, setSocket] = useState<WebSocket | null>(null);
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState<{ text: string, isMine: boolean }[]>([]);
-  const [username, setUsername] = useState<string>('User ' + Math.floor(Math.random() * 1000));
+  const [username, setUsername] = useState<string>('User ' + Math.floor(Math.random() * 100000));
 
   useEffect(() => {
-    setUsername("new user"); // ESLint 임시 오류 해결
+    setUsername(username); // ESLint 임시 오류 해결
   }, []);
 
   useEffect(() => {
     const wsProtocol = window.location.protocol === "https:" ? "wss" : "ws";
-    const ws = new WebSocket(`${wsProtocol}://ws.davinci-code.net/ws`);
+    const ws = new WebSocket(`ws://localhost:9090/ws`);
 
 
     ws.onopen = () => {
@@ -65,6 +65,7 @@ const Home = () => {
         type="text"
         value={message}
         onChange={(e) => setMessage(e.target.value)}
+        onKeyDown={(e) => e.key === "Enter" && sendMessage()}
         placeholder="메시지를 입력하세요..."
       />
       <button onClick={sendMessage}>전송</button>
