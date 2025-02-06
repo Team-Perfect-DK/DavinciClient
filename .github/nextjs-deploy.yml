@@ -22,6 +22,7 @@ jobs:
         run: |
           ssh -o StrictHostKeyChecking=no ubuntu@ec2-3-36-196-30.ap-northeast-2.compute.amazonaws.com
             cd /davinci/DavinciClient
+            git switch develop
             git pull origin develop
             docker-compose stop nextjs
             docker-compose rm -f nextjs
