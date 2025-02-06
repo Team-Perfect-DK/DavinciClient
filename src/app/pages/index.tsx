@@ -10,11 +10,11 @@ const Home = () => {
 
   useEffect(() => {
     setUsername(username); // ESLint 임시 오류 해결
-  }, []);
+  }, [username]);
 
   useEffect(() => {
     const wsProtocol = window.location.protocol === "https:" ? "wss" : "ws";
-    const ws = new WebSocket(`ws://ws.davinci-code.net/ws`);
+    const ws = new WebSocket(`${wsProtocol}://ws.davinci-code.net/ws`);
 
 
     ws.onopen = () => {
