@@ -3,7 +3,7 @@ name: Deploy to EC2
 on:
   push:
     branches:
-      - develop  # main 브랜치에 푸시할 때 트리거
+      - main  # main 브랜치에 푸시할 때 트리거
 
 jobs:
   deploy:
@@ -22,8 +22,8 @@ jobs:
         run: |
           ssh -o StrictHostKeyChecking=no ubuntu@ec2-3-36-196-30.ap-northeast-2.compute.amazonaws.com << 'EOF'
             cd /davinci/DavinciClient
-            git switch develop
-            git pull origin develop
+            git switch main
+            git pull origin main
             docker-compose stop nextjs
             docker-compose rm -f nextjs
             docker-compose build nextjs
