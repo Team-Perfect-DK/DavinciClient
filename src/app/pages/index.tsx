@@ -1,98 +1,41 @@
-"use client"
+"use client";  // Next.js 15에서 클라이언트 컴포넌트 지정
 
-import { useState, useEffect } from 'react';
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { useUserStore } from "@/store/userStore";
+import { registerUser } from "@/app/api/user";
 
-const Home = () => {
-  const [socket, setSocket] = useState<WebSocket | null>(null);
-  const [message, setMessage] = useState('');
-  const [messages, setMessages] = useState<{ text: string, isMine: boolean }[]>([]);
-  const [username, setUsername] = useState<string>('User ' + Math.floor(Math.random() * 100000));
+export default function Home() {
+  const [nickname, setNickname] = useState("");
+  const router = useRouter();
+  const setUser = useUserStore((state) => state.setUser);
 
-  useEffect(() => {
-    setUsername(username); // ESLint 임시 오류 해결
-  }, [username]);
+  const handleSubmit = async () => {
+    if (!nickname) return alert("닉네임을 입력하세요!");
 
-  useEffect(() => {
-    const wsProtocol = window.location.protocol === "https:" ? "wss" : "ws";
-    const ws = new WebSocket(`${wsProtocol}://ws.davinci-code.net/ws`);
-
-
-    ws.onopen = () => {
-      console.log("WebSocket 연결 성공");
-      setSocket(ws);
-    };
-
-    ws.onmessage = (event: MessageEvent) => {
-      const receivedMessage = event.data;
-      // 수신된 메시지에 상대방이 보낸 것인지 구별
-      if (!receivedMessage.includes(`(${username})`)) {
-        setMessages(prevMessages => [
-          ...prevMessages, 
-          { text: receivedMessage, isMine: false }
-        ]);  // 상대방 메시지
-      }
-    };
-
-    ws.onerror = (error: Event) => {
-      console.error("WebSocket 에러: ", error);
-    };
-
-    ws.onclose = () => {
-      console.log("WebSocket 연결 종료");
-    };
-
-    return () => {
-      ws.close();
-    };
-  }, [username]);
-
-  const sendMessage = () => {
-    if (socket && socket.readyState === WebSocket.OPEN) {
-      // 클라이언트가 보낸 메시지에 `isMine` 속성 추가
-      const messageWithSender = `${message} (${username})`;  // 메시지에 username을 포함시킴
-      setMessages(prevMessages => [...prevMessages, { text: message, isMine: true }]);  // 내 메시지
-      socket.send(messageWithSender);  // 서버로 메시지 전송
-      setMessage('');  // 메시지 입력란 초기화
+    try {
+      const data = await registerUser(nickname);
+      setUser(nickname, data.sessionId);
+      localStorage.setItem("sessionId", data.sessionId);
+      router.push("/lobby");  // 로비 페이지로 이동
+    } catch (error) {
+      alert("닉네임 중복! 다른 닉네임을 입력하세요.");
     }
   };
 
   return (
-    <div>
-      <h1>실시간 채팅</h1>
-
-      {/* 메시지 입력 */}
+    <div className="flex flex-col items-center justify-center h-screen">
+      <h1 className="text-2xl font-bold mb-4">닉네임 입력</h1>
       <input
+        className="border px-4 py-2 rounded mb-2"
         type="text"
-        value={message}
-        onChange={(e) => setMessage(e.target.value)}
-        onKeyDown={(e) => e.key === "Enter" && sendMessage()}
-        placeholder="메시지를 입력하세요..."
+        placeholder="닉네임 입력"
+        value={nickname}
+        onChange={(e) => setNickname(e.target.value)}
       />
-      <button onClick={sendMessage}>전송</button>
-
-      {/* 메시지 표시 */}
-      <div style={{ marginBottom: '20px' }}>
-        {messages.map((msg, index) => (
-          <div 
-            key={index} 
-            style={{
-              textAlign: msg.isMine ? 'right' : 'left', // 내 메시지는 오른쪽, 상대는 왼쪽
-              margin: '10px',
-              padding: '10px',
-              backgroundColor: msg.isMine ? '#d1f7c4' : '#f0f0f0',  // 내 메시지와 상대방 메시지 색상 구분
-              borderRadius: '10px',
-              maxWidth: '60%',
-              marginLeft: msg.isMine ? 'auto' : '0', // 내 메시지는 오른쪽 끝 정렬
-              marginRight: msg.isMine ? '0' : 'auto', // 상대방 메시지는 왼쪽 끝 정렬
-            }}>
-            {msg.text}
-          </div>
-        ))}
-      </div>
-
-
+      <button className="bg-blue-500 text-white px-4 py-2 rounded" onClick={handleSubmit}>
+        시작하기
+      </button>
     </div>
   );
-};
-
-export default Home;
+}
