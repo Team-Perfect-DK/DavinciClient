@@ -17,12 +17,13 @@ export async function fetchWaitingRooms() {
 }
 
 export async function createRoom(title: String) {
+  const hostId = localStorage.getItem("sessionId");
   const res = await fetch(`${API_URL}/rooms/create`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ title }), // JSON 형식으로 보내기
+    body: JSON.stringify({ title, hostId }), // JSON 형식으로 보내기
   });
 
   if (!res.ok) {
@@ -38,6 +39,10 @@ export interface Room {
   title: string; 
   roomCode: string;
   status: "WAITING" | "PLAYING"; 
+  hostId: string;
+  hostNickname: string;
+  guestId: string | null;
+  guestNickname: string | null;
 }
 
 
@@ -57,6 +62,23 @@ export async function fetchRoomByRoomCode(roomCode: string): Promise<Room | null
 
   return data;
 }
+
+export async function joinRoomAsGuest(roomCode: string, guestId: string) {
+  const res = await fetch(`${API_URL}/rooms/${roomCode}/join`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ roomCode, guestId }), // sessionId를 보내서 게스트로 참여
+  });
+
+  if (!res.ok) {
+    throw new Error("게스트로 방에 입장하는데 실패했습니다.");
+  }
+
+  return await res.json();
+}
+
 
 
 // 게임 시작 요청 (호스트만 가능)

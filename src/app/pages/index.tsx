@@ -17,6 +17,7 @@ export default function Home() {
       const data = await registerUser(nickname);
       setUser(nickname, data.sessionId);
       localStorage.setItem("sessionId", data.sessionId);
+      localStorage.setItem("nickname", nickname);
       router.push("/lobby");  // 로비 페이지로 이동
     } catch (error) {
       alert("닉네임 중복! 다른 닉네임을 입력하세요.");
