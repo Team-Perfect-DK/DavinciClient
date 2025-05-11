@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { fetchRoomByRoomCode, startGame, leaveRoom, joinRoomAsGuest } from "@/app/api/room";
+import { Client } from "@stomp/stompjs";
+import SockJS from "sockjs-client";
 
 interface Room {
   id: string;
@@ -21,27 +23,19 @@ export default function RoomPage() {
   const [room, setRoom] = useState<Room | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string>("");
-  const [socket, setSocket] = useState<WebSocket | null>(null);
-  const [role, setRole] = useState<"HOST" | "GUEST" | null>(null);
+  const [stompClient, setStompClient] = useState<Client | null>(null);
 
-  const userId = localStorage.getItem("sessionId");
+  const userId = typeof window !== "undefined" ? localStorage.getItem("sessionId") : null;
 
   useEffect(() => {
     if (!roomCode || !userId) return;
 
-    async function loadRoom() {
+    async function initRoom() {
       try {
         const data = await fetchRoomByRoomCode(roomCode as string);
         setRoom(data as Room);
 
         if (data && userId && data.hostId && !data.guestId && data.hostId !== userId) {
-          if (data.hostId === userId) {
-            console.log("🟢 나는 Host입니다.");
-          } else if (data.guestId === userId) {
-            console.log("🔴 나는 Guest입니다.");
-          } else if (!data.guestId) {
-            console.log("🙋‍♂️ 아직 Guest 없음 → 자동 참여?");
-          }
           const updatedRoom = await joinRoomAsGuest(data.roomCode, userId);
           setRoom(updatedRoom);
         }
@@ -52,31 +46,43 @@ export default function RoomPage() {
       }
     }
 
-    loadRoom();
+    initRoom();
 
-    // WebSocket 연결
-    const ws = new WebSocket(`wss://davinci.net/rooms/${roomCode}`);
+    // WebSocket STOMP 연결 설정
+    const socket = new SockJS(`${process.env.NEXT_PUBLIC_WS_URL}`);
+    const client = new Client({
+      webSocketFactory: () => socket,
+      reconnectDelay: 5000,
+      onConnect: () => {
+        console.log("✅ STOMP 연결됨");
 
-    ws.onopen = () => {
-      console.log("WebSocket 연결됨");
-      setSocket(ws);
-    };
+        // 메시지 수신 구독
+        client.subscribe(`/topic/rooms/${roomCode}`, (message) => {
+          try {
+            const updatedRoom = JSON.parse(message.body);
+            console.log("💬 수신된 room:", updatedRoom);
+            setRoom(updatedRoom);
+          } catch (err) {
+            console.error("메시지 파싱 오류:", err);
+          }
+        });
 
-    ws.onmessage = (event) => {
-      const updatedRoom = JSON.parse(event.data);
-      setRoom(updatedRoom);
-    };
+        // 서버에 방 참가 메시지 보내기
+        client.publish({
+          destination: "/app/rooms/join",
+          body: JSON.stringify({ roomCode, userId }),
+        });
+      },
+      onStompError: (frame) => {
+        console.error("STOMP 오류:", frame);
+      },
+    });
 
-    ws.onerror = (error) => {
-      console.error("WebSocket 오류:", error);
-    };
-
-    ws.onclose = () => {
-      console.log("WebSocket 연결 종료");
-    };
+    client.activate();
+    setStompClient(client);
 
     return () => {
-      ws.close();
+      client.deactivate();
     };
   }, [roomCode, userId]);
 
@@ -84,17 +90,23 @@ export default function RoomPage() {
     if (!room) return;
     try {
       await startGame(room.roomCode);
-      socket?.send(JSON.stringify({ type: "GAME_STARTED" }));
+      stompClient?.publish({
+        destination: "/app/rooms/start",
+        body: JSON.stringify({ roomCode: room.roomCode }),
+      });
     } catch (err) {
       alert("게임을 시작할 수 없습니다.");
     }
   }
 
   async function handleLeaveRoom() {
-    if (!room) return;
+    if (!room || !userId) return;
     try {
-      if (userId) await leaveRoom(room.roomCode, userId);
-      socket?.send(JSON.stringify({ type: "PLAYER_LEFT", userId }));
+      await leaveRoom(room.roomCode, userId);
+      stompClient?.publish({
+        destination: "/app/rooms/leave",
+        body: JSON.stringify({ roomCode: room.roomCode, userId }),
+      });
       router.push("/");
     } catch (err) {
       alert("방을 나갈 수 없습니다.");
@@ -130,7 +142,6 @@ export default function RoomPage() {
             게임 시작
           </button>
         )}
-
         <button onClick={handleLeaveRoom} className="px-4 py-2 bg-gray-500 text-white rounded-lg shadow-md hover:bg-gray-600">
           나가기
         </button>
