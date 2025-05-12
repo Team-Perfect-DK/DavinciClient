@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation"; // ✅ Next.js 라우터 가져오기
 import { fetchWaitingRooms, createRoom } from "@/app/api/room";
+import { Client } from "@stomp/stompjs";
+import SockJS from "sockjs-client";
 
 // 방 데이터의 타입 정의
 interface Room {
@@ -18,6 +20,7 @@ export default function Lobby() {
   const [error, setError] = useState<string>(""); // 에러 상태는 string
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false); // 모달 열림 상태는 boolean
   const [roomTitle, setRoomTitle] = useState<string>(""); // 방 제목은 string
+  const [stompClient, setStompClient] = useState<Client | null>(null);
 
   const router = useRouter(); // ✅ 라우터 추가
 
@@ -33,6 +36,31 @@ export default function Lobby() {
       }
     }
     loadRooms();
+    
+    const socket = new SockJS(`${process.env.NEXT_PUBLIC_WS_URL}`);
+    const client = new Client({
+      webSocketFactory: () => socket,
+      reconnectDelay: 5000,
+      onConnect: () => {
+        console.log("✅ STOMP 연결됨");
+
+        // 방 리스트 수신 구독
+        client.subscribe(`/topic/rooms/update`, (message) => {
+          try {
+            console.log("hihihi")
+            loadRooms();
+          } catch (err) {
+            console.error("방 리스트 수신 실패:", err);
+          }
+        });
+      }
+    })
+    client.activate();
+    setStompClient(client);
+
+    return () => {
+      client.deactivate();
+    };
   }, []);
 
   const handleCreateRoom = async () => {
@@ -48,6 +76,8 @@ export default function Lobby() {
       setError("방 생성에 실패했습니다.");
     }
   };
+
+
 
   return (
     <div className="min-h-screen p-8">

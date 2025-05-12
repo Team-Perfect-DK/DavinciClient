@@ -86,6 +86,9 @@ export default function RoomPage() {
     };
   }, [roomCode, userId]);
 
+
+
+
   async function handleStartGame() {
     if (!room) return;
     try {
@@ -107,7 +110,7 @@ export default function RoomPage() {
         destination: "/app/rooms/leave",
         body: JSON.stringify({ roomCode: room.roomCode, userId }),
       });
-      router.push("/");
+      router.push("/lobby");
     } catch (err) {
       alert("방을 나갈 수 없습니다.");
     }
