@@ -1,28 +1,27 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation"; // ✅ Next.js 라우터 가져오기
+import { useRouter } from "next/navigation"; 
 import { fetchWaitingRooms, createRoom } from "@/app/api/room";
 import { Client } from "@stomp/stompjs";
 import SockJS from "sockjs-client";
 
-// 방 데이터의 타입 정의
 interface Room {
   id: string;
   title: string;
   roomCode: string;
-  status: "WAITING" | "PLAYING"; // 상태 타입 정의
+  status: "WAITING" | "PLAYING";
 }
 
 export default function Lobby() {
-  const [rooms, setRooms] = useState<Room[]>([]); // 방 리스트의 상태는 Room 타입 배열
-  const [loading, setLoading] = useState<boolean>(true); // 로딩 상태는 boolean
-  const [error, setError] = useState<string>(""); // 에러 상태는 string
-  const [isModalOpen, setIsModalOpen] = useState<boolean>(false); // 모달 열림 상태는 boolean
-  const [roomTitle, setRoomTitle] = useState<string>(""); // 방 제목은 string
+  const [rooms, setRooms] = useState<Room[]>([]); 
+  const [loading, setLoading] = useState<boolean>(true); 
+  const [error, setError] = useState<string>(""); 
+  const [isModalOpen, setIsModalOpen] = useState<boolean>(false); 
+  const [roomTitle, setRoomTitle] = useState<string>(""); 
   const [stompClient, setStompClient] = useState<Client | null>(null);
 
-  const router = useRouter(); // ✅ 라우터 추가
+  const router = useRouter();
 
   useEffect(() => {
     async function loadRooms() {
@@ -42,12 +41,8 @@ export default function Lobby() {
       webSocketFactory: () => socket,
       reconnectDelay: 5000,
       onConnect: () => {
-        console.log("✅ STOMP 연결됨");
-
-        // 방 리스트 수신 구독
         client.subscribe(`/topic/rooms/update`, (message) => {
           try {
-            console.log("hihihi")
             loadRooms();
           } catch (err) {
             console.error("방 리스트 수신 실패:", err);
@@ -69,8 +64,6 @@ export default function Lobby() {
       const newRoom = await createRoom(roomTitle);
       setRooms((prev) => [...prev, newRoom]);
       setIsModalOpen(false);
-      setRoomTitle("");
-      console.log(newRoom.roomCode)
       router.push(`/room/${newRoom.roomCode}`);
     } catch (err) {
       setError("방 생성에 실패했습니다.");
@@ -103,7 +96,7 @@ export default function Lobby() {
               </p>
               <button
                 className="mt-2 px-4 py-2 bg-blue-500 text-white rounded-lg"
-                onClick={() => router.push(`/room/${room.roomCode}`)} // ✅ 방 입장
+                onClick={() => router.push(`/room/${room.roomCode}`)}
               >
                 입장하기
               </button>

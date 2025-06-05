@@ -1,8 +1,6 @@
 const API_URL = process.env.NEXT_PUBLIC_API_URL;
 
 export async function fetchWaitingRooms() {
-  console.log("API URL:", process.env.NEXT_PUBLIC_API_URL);
-
   const res = await fetch(`${API_URL}/rooms/waiting`, {
     method: "GET",
     headers: {
@@ -23,7 +21,7 @@ export async function createRoom(title: String) {
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ title, hostId }), // JSON 형식으로 보내기
+    body: JSON.stringify({ title, hostId }),
   });
 
   if (!res.ok) {
@@ -47,7 +45,6 @@ export interface Room {
 
 
 export async function fetchRoomByRoomCode(roomCode: string): Promise<Room | null> {
-  console.log("api: ", roomCode)
   const response = await fetch(`${API_URL}/rooms/${roomCode}`);
   if (!response.ok) {
     console.error("방 정보를 불러오는 데 실패했습니다.");
@@ -69,7 +66,7 @@ export async function joinRoomAsGuest(roomCode: string, guestId: string) {
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ roomCode, guestId }), // sessionId를 보내서 게스트로 참여
+    body: JSON.stringify({ roomCode, guestId }),
   });
 
   if (!res.ok) {

@@ -48,19 +48,15 @@ export default function RoomPage() {
 
     initRoom();
 
-    // WebSocket STOMP 연결 설정
     const socket = new SockJS(`${process.env.NEXT_PUBLIC_WS_URL}`);
     const client = new Client({
       webSocketFactory: () => socket,
       reconnectDelay: 5000,
       onConnect: () => {
-        console.log("✅ STOMP 연결됨");
-
         // 메시지 수신 구독
         client.subscribe(`/topic/rooms/${roomCode}`, (message) => {
           try {
             const updatedRoom = JSON.parse(message.body);
-            console.log("💬 수신된 room:", updatedRoom);
             setRoom(updatedRoom);
           } catch (err) {
             console.error("메시지 파싱 오류:", err);
