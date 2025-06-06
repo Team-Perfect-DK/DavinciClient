@@ -1,9 +1,8 @@
-import Index from "../app/pages/index";
+"use client";
+
+import NicknameForm from "@/components/NicknameForm";
 
 export default function Home() {
-  return (
-    <>
-    <Index></Index>
-    </>
-  );
+  return <NicknameForm />;
+  
 }
