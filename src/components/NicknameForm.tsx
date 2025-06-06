@@ -55,11 +55,11 @@ export default function NicknameForm() {
   }, []);
 
   return (
-    <div className="p-4 w-full min-h-screen flex items-center justify-center bg-black">
-      <div className="flex flex-row items-center justify-evenly w-8/12 p-10 h-full">
+    <div className="p-4 w-full min-h-screen flex items-center justify-center bg-black bg-gradient-to-l from-white via-black">
+      <div className="flex flex-row items-center justify-evenly w-8/12 p-10 h-full"> 
         <div className="relative flex flex-col items-center justify-center w-full h-full">
           <div className="w-3/4 h-full relative">
-            <img src="/img/davincimonarisawithouteyes.png " className="w-full h-full invert" alt="monalisa" />
+            <img src="/img/davincimonarisawithouteyes.png " className="w-full h-full invert bg-inherit" alt="monalisa" />
             <img
               ref={leftEyeRef}
               src="/img/monarisaLeftEye.png"
@@ -86,15 +86,15 @@ export default function NicknameForm() {
           <div className="text-6xl font-bold mt-2 text-myBrown text-stroke text-stroke-white">Davinci Code</div>
         </div>
         <div className="flex flex-col items-start w-full h-full justify-center pl-10">
-          <h1 className="text-2xl font-bold mb-4 text-white">닉네임 입력</h1>
+          <h1 className="text-3xl font-bold mb-4 text-white">닉네임 입력</h1>
           <input
             className="border px-4 py-2 rounded mb-2"
             type="text"
-            placeholder="닉네임 입력"
+            placeholder="Your Nickname"
             value={nickname}
             onChange={(e) => setNickname(e.target.value)}
           />
-          <button className="bg-myBrown text-white px-4 py-2 rounded" onClick={handleSubmit}>
+          <button className="bg-myBrown text-white px-8 py-2 rounded" onClick={handleSubmit}>
             시작하기
           </button>
         </div>
