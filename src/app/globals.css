@@ -1,0 +1,22 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer utilities {
+  .text-stroke {
+    -webkit-text-stroke-width: 1px;
+    -webkit-text-stroke-color: black;
+  }
+
+  .text-stroke-white {
+    -webkit-text-stroke-color: #F2F2F2;
+  }
+
+  .text-stroke-red {
+    -webkit-text-stroke-color: red;
+  }
+
+  .text-stroke-2 {
+    -webkit-text-stroke-width: 2px;
+  }
+}
