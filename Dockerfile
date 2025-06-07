@@ -5,7 +5,8 @@ WORKDIR /app
 COPY package*.json /app/
 RUN npm install
 
-COPY . . 
+COPY . .
+COPY .env.production .env.production
 ENV NODE_ENV=production
 RUN npm run build --ignore-lint
 
