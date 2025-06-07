@@ -6,7 +6,7 @@ COPY package*.json /app/
 RUN npm install
 
 COPY . . 
-
+ENV NODE_ENV=production
 RUN npm run build --ignore-lint
 
 FROM node:20-alpine
