@@ -6,8 +6,7 @@ COPY package*.json /app/
 RUN npm install
 
 COPY . .
-COPY .env.production .env
-ENV NODE_ENV=production
+ENV NEXT_PUBLIC_API_URL=https://davinci-code.net/api
 RUN npm run build --ignore-lint
 
 FROM node:20-alpine
