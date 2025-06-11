@@ -7,6 +7,7 @@ RUN npm install
 
 COPY . .
 ENV NEXT_PUBLIC_API_URL=https://davinci-code.net/api
+ENV NEXT_PUBLIC_WS_URL=https://davinci-code.net/ws
 RUN npm run build --ignore-lint
 
 FROM node:20-alpine
