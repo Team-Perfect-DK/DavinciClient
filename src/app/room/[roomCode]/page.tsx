@@ -27,64 +27,87 @@ export default function RoomPage() {
 
   const userId = typeof window !== "undefined" ? localStorage.getItem("sessionId") : null;
 
-  useEffect(() => {
-    if (!roomCode || !userId) return;
+useEffect(() => {
+  if (!roomCode || !userId) return;
 
-    async function initRoom() {
-      try {
-        const data = await fetchRoomByRoomCode(roomCode as string);
-        setRoom(data as Room);
+  let client: Client;
 
-        if (data && userId && data.hostId && !data.guestId && data.hostId !== userId) {
-          const updatedRoom = await joinRoomAsGuest(data.roomCode, userId);
-          setRoom(updatedRoom);
-        }
-      } catch (err) {
-        setError("방 정보를 불러올 수 없습니다.");
-      } finally {
-        setLoading(false);
+  async function initRoomAndConnectSocket() {
+    try {
+      // 방 정보 요청
+      const data = await fetchRoomByRoomCode(roomCode as string);
+      let finalRoom: Room;
+      if (!data) {
+        throw new Error("방 정보가 없습니다.");
       }
+      // 게스트일 경우 참여
+      if (data && userId && data.hostId && !data.guestId && data.hostId !== userId) {
+        const joined = await joinRoomAsGuest(data.roomCode, userId);
+        finalRoom = joined.type === "ROOM_UPDATED" ? joined.payload : joined;
+      } else {
+        finalRoom = data;
+      }
+
+      // 최종 방 정보 반영
+      setRoom(finalRoom);
+      setLoading(false);
+
+      // WebSocket 연결
+      const socket = new SockJS(`${process.env.NEXT_PUBLIC_WS_URL}`);
+      client = new Client({
+        webSocketFactory: () => socket,
+        reconnectDelay: 5000,
+        onConnect: () => {
+          client.subscribe(`/topic/rooms/${roomCode}`, (message) => {
+            try {
+              const data = JSON.parse(message.body);
+              if ("type" in data && "payload" in data) {
+                switch (data.type) {
+                  case "ROOM_UPDATED":
+                  case "ROOM_CREATED":
+                    setRoom(data.payload);
+                    console.log(data)
+                    break;
+                  case "ROOM_DELETED":
+                    router.push("/lobby");
+                    break;
+                  case "GAME_STARTED":
+                    // 추후 처리
+                    break;
+                }
+              }
+            } catch (err) {
+              console.error("WebSocket 메시지 파싱 오류:", err);
+            }
+          });
+
+          // 방 참가 이벤트 전송
+          client.publish({
+            destination: "/app/rooms/join",
+            body: JSON.stringify({ roomCode, userId }),
+          });
+        },
+      });
+
+      client.activate();
+      setStompClient(client);
+    } catch (err) {
+      console.error(err);
+      setError("방 정보를 불러올 수 없습니다.");
+      setLoading(false);
     }
+  }
 
-    initRoom();
+  initRoomAndConnectSocket();
 
-    const socket = new SockJS(`${process.env.NEXT_PUBLIC_WS_URL}`);
-    const client = new Client({
-      webSocketFactory: () => socket,
-      reconnectDelay: 5000,
-      onConnect: () => {
-        // 메시지 수신 구독
-        client.subscribe(`/topic/rooms/${roomCode}`, (message) => {
-          try {
-            const updatedRoom = JSON.parse(message.body);
-            setRoom(updatedRoom);
-          } catch (err) {
-            console.error("메시지 파싱 오류:", err);
-          }
-        });
-
-        // 서버에 방 참가 메시지 보내기
-        client.publish({
-          destination: "/app/rooms/join",
-          body: JSON.stringify({ roomCode, userId }),
-        });
-      },
-      onStompError: (frame) => {
-        console.error("STOMP 오류:", frame);
-      },
-    });
-
-    client.activate();
-    setStompClient(client);
-
-    return () => {
-      client.deactivate();
-    };
-  }, [roomCode, userId]);
+  return () => {
+    if (client) client.deactivate();
+  };
+}, [roomCode, userId]);
 
 
 
-
+// 게임시작
   async function handleStartGame() {
     if (!room) return;
     try {
@@ -98,6 +121,7 @@ export default function RoomPage() {
     }
   }
 
+  // 방 나가기
   async function handleLeaveRoom() {
     if (!room || !userId) return;
     try {
@@ -108,7 +132,7 @@ export default function RoomPage() {
       });
       router.push("/lobby");
     } catch (err) {
-      alert("방을 나갈 수 없습니다.");
+      alert("방을 나갈 수 없습니다. 다시 시도해보세요.");
     }
   }
 
@@ -131,7 +155,7 @@ export default function RoomPage() {
         </div>
         <div className="w-1/2 text-center">
           <h2 className="text-xl font-bold">🙋‍♂️ 게스트</h2>
-          <p className="text-red-500">{room.guestNickname || "없음"}</p>
+          <p className="text-red-500">{room.guestNickname && room.guestNickname.length > 0 ? room.guestNickname : "없음"}</p>
         </div>
       </div>
 
