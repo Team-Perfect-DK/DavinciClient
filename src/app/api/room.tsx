@@ -79,7 +79,7 @@ export async function joinRoomAsGuest(roomCode: string, guestId: string) {
 
 
 // 게임 시작 요청 (호스트만 가능)
-export async function startGame(roomCode: string) {
+export async function startGame(roomCode: string, sessionId?: string) {
   const res = await fetch(`${API_URL}/rooms/${roomCode}/start`, {
     method: "POST",
   });

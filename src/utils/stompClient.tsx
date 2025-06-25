@@ -1,38 +1,79 @@
-import { CompatClient, IMessage, Stomp } from "@stomp/stompjs";
+import { CompatClient, Stomp } from "@stomp/stompjs";
 import SockJS from "sockjs-client";
 
-let stompClient: CompatClient | null = null;
+let client: CompatClient | null = null;
 
-export function connectGameSocket(
+export const connectGameSocket = (
   roomCode: string,
-  onMessage: (data: {
-    action: "CARD_OPENED" | "GAME_ENDED";
-    cardId: number;
-    nextTurnUserId?: string;
-    winnerNickname?: string;
-  }) => void
-) {
-  const socket = new SockJS(`${process.env.NEXT_PUBLIC_WS_URL}`);
-  stompClient = Stomp.over(socket); // CompatClient로 반환됨
-
-  stompClient.connect({}, () => {
-    stompClient?.subscribe(`/topic/games/${roomCode}`, (message: IMessage) => {
-      const data = JSON.parse(message.body);
-      onMessage(data);
+  onMessage: (msg: any) => void
+): CompatClient => {
+  if (client && client.connected) {
+    client.disconnect(() => {
+      console.log("이전 소켓 연결 해제");
     });
-  });
-}
-
-export function sendGuessMessage(payload: {
-  roomCode: string;
-  userId: string;
-  targetCardId: number;
-  guessedNumber: number;
-  guessedColor: "BLACK" | "WHITE";
-}) {
-  if (stompClient?.connected) {
-    stompClient.send("/app/games/action", {}, JSON.stringify(payload));
-  } else {
-    console.error("STOMP 연결 안 됨");
   }
-}
+
+  const socket = new SockJS(`${process.env.NEXT_PUBLIC_WS_URL}`);
+  client = Stomp.over(socket);
+  client.debug = () => {};
+
+  client.connect({}, () => {
+    client!.subscribe(
+      `/topic/rooms/${roomCode}`,
+      msg => onMessage(JSON.parse(msg.body)),
+      { id: `${roomCode}-rooms` }
+    );
+    client!.subscribe(
+      `/topic/games/${roomCode}`,
+      msg => onMessage(JSON.parse(msg.body)),
+      { id: `${roomCode}-games` }
+    );
+  });
+
+  return client;
+};
+
+
+export const disconnectSocket = () => {
+  if (client && client.connected) {
+    client.disconnect(() => {
+      console.log("WebSocket disconnected");
+    });
+  }
+};
+
+export const sendJoinMessage = (
+  client: CompatClient,
+  roomCode: string,
+  userId: string,
+  nickname: string
+) => {
+  client.send(
+    "/app/rooms/join",
+    {},
+    JSON.stringify({ roomCode, userId, nickname })
+  );
+};
+
+export const sendStartMessage = (
+  client: CompatClient,
+  roomCode: string
+) => {
+  client.send("/app/rooms/start", {}, JSON.stringify({ roomCode }));
+};
+
+export const sendGuessMessage = (
+  client: CompatClient,
+  payload: {
+    roomCode: string;
+    userId: string;
+    targetCardId: number;
+    guessedNumber: number;
+  }
+): void => {
+  if (!client.connected) return;
+  client.send("/app/games/action", {}, JSON.stringify(payload));
+};
+
+
+
