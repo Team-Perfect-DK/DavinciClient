@@ -77,15 +77,6 @@ export async function joinRoomAsGuest(roomCode: string, guestId: string) {
 }
 
 
-
-// 게임 시작 요청 (호스트만 가능)
-export async function startGame(roomCode: string) {
-  const res = await fetch(`${API_URL}/rooms/${roomCode}/start`, {
-    method: "POST",
-  });
-  if (!res.ok) throw new Error("게임을 시작할 수 없습니다.");
-}
-
 // 방 나가기 요청
 export async function leaveRoom(roomCode: string, userId: string) {
   const res = await fetch(`${API_URL}/rooms/${roomCode}/leave`, {
