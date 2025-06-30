@@ -20,16 +20,28 @@ jobs:
 
       - name: Deploy to EC2
         run: |
-          ssh -o StrictHostKeyChecking=no ubuntu@ec2-3-36-196-30.ap-northeast-2.compute.amazonaws.com << 'EOF'
-            set -e
+         ssh -tt -o StrictHostKeyChecking=no ubuntu@ec2-3-36-196-30.ap-northeast-2.compute.amazonaws.com << 'EOF'
+            set -e  # 명령 하나라도 실패하면 즉시 종료
             cd /davinci/DavinciClient
+
             git switch main
             git pull origin main
-            docker-compose stop nextjs
-            docker-compose rm -f nextjs
-            docker-compose build nextjs
-            docker-compose up -d nextjs
+            docker-compose stop nextjs || true
+            docker-compose rm -f nextjs || true
+
+            echo "빌드 시작 (도중 출력 유지)"
+            docker-compose build nextjs &
+
+            # 빌드 중 SSH 세션 끊김 방지용 출력 루프
+            while kill -0 $! 2> /dev/null; do
+              echo "🛠 빌드 중입니다... ($(date))"
+              sleep 10
+            done
+
+            echo "컨테이너 재기동"
+            docker-compose up -d --force-recreate nextjs
+
+            echo "배포 완료!"
             sleep 5
-            # 추가적인 배포 명령어 작성
           EOF
 
