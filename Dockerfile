@@ -20,7 +20,7 @@ COPY --from=build /app/package*.json ./
 COPY --from=build /app/.next ./.next
 COPY --from=build /app/public ./public
 
-RUN npm ci --omit=dev
+RUN npm install --omit=dev
 
 CMD ["npm", "start"]
 EXPOSE 3000
