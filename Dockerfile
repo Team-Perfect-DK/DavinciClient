@@ -8,16 +8,19 @@ RUN npm install
 COPY . .
 ENV NEXT_PUBLIC_API_URL=https://davinci-code.net/api
 ENV NEXT_PUBLIC_WS_URL=https://davinci-code.net/ws
-RUN npm run build --ignore-lint
+ENV NEXT_DISABLE_LINTING=true
+
+RUN npm run build
 
 FROM node:20-alpine
+
+WORKDIR /app
 
 COPY --from=build /app/package*.json ./
 COPY --from=build /app/.next ./.next
 COPY --from=build /app/public ./public
 
-RUN npm install --production
+RUN npm ci --omit=dev
 
 CMD ["npm", "start"]
-
 EXPOSE 3000
