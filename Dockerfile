@@ -1,30 +1,23 @@
-# --- Build stage ---
-FROM node:20 AS build
+FROM node:20-alpine AS build
 
 WORKDIR /app
 
-COPY package*.json ./
+COPY package*.json /app/
 RUN npm install
 
 COPY . .
-
 ENV NEXT_PUBLIC_API_URL=https://davinci-code.net/api
 ENV NEXT_PUBLIC_WS_URL=https://davinci-code.net/ws
 ENV NEXT_DISABLE_LINTING=true
 
-RUN npm run build
+FROM node:20-alpine
 
-# --- Production stage ---
-FROM node:20
-
-WORKDIR /app
-
-COPY package*.json ./
-RUN npm install --omit=dev
-
-COPY --from=build /app/public ./public
+COPY --from=build /app/package*.json ./
 COPY --from=build /app/.next ./.next
+COPY --from=build /app/public ./public
 
-ENV NODE_ENV=production
-EXPOSE 3000
+RUN npm install --production
+
 CMD ["npm", "start"]
+
+EXPOSE 3000
