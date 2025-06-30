@@ -19,12 +19,12 @@ FROM node:20
 
 WORKDIR /app
 
-COPY --from=build /app/package*.json ./
-COPY --from=build /app/node_modules ./node_modules
+COPY package*.json ./
+RUN npm install --omit=dev
+
 COPY --from=build /app/public ./public
 COPY --from=build /app/.next ./.next
 
 ENV NODE_ENV=production
-
 EXPOSE 3000
 CMD ["npm", "start"]
