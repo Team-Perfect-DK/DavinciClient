@@ -10,6 +10,8 @@ ENV NEXT_PUBLIC_API_URL=https://davinci-code.net/api
 ENV NEXT_PUBLIC_WS_URL=https://davinci-code.net/ws
 ENV NEXT_DISABLE_LINTING=true
 
+RUN npm run build
+
 FROM node:20-alpine
 
 COPY --from=build /app/package*.json ./
