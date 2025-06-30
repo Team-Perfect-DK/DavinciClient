@@ -4,7 +4,7 @@ FROM node:20 AS build
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm install --omit=dev && npm install next
+RUN npm install --omit=dev
 
 COPY . .
 
@@ -27,4 +27,4 @@ COPY --from=build /app/package*.json ./
 ENV NODE_ENV=production
 
 EXPOSE 3000
-CMD ["npx", "next", "start"]
+CMD ["npm", "start"]
