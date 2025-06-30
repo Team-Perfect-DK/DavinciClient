@@ -4,7 +4,7 @@ FROM node:20 AS build
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm install  # devDependencies도 같이 설치
+RUN npm install
 
 COPY . .
 
