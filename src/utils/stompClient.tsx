@@ -36,6 +36,7 @@ export const disconnectSocket = () => {
       console.log("WebSocket disconnected");
     });
   }
+  client = null;
 };
 
 // 3. 방 참가 메시지
