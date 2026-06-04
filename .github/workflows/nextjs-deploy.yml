@@ -3,7 +3,7 @@ name: Deploy to EC2
 on:
   push:
     branches:
-      - main  # main 브랜치에 푸시할 때 트리거
+      - main
 
 jobs:
   deploy:
@@ -11,10 +11,10 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
 
       - name: Set up SSH
-        uses: webfactory/ssh-agent@v0.5.3
+        uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
 
@@ -29,17 +29,15 @@ jobs:
             docker compose stop nextjs || true
             docker compose rm -f nextjs || true
 
-            echo "빌드 시작"
-            docker compose build nextjs &
+            echo "Docker cache cleanup"
+            docker system prune -af || true
+            docker builder prune -af || true
 
-            while kill -0 $! 2> /dev/null; do
-              echo "🛠 빌드 중... $(date)"
-              sleep 10
-            done
+            echo "Build start"
+            docker compose build nextjs
 
             docker compose up -d --force-recreate nextjs
 
-            echo "배포 완료"
+            echo "Deploy complete"
             sleep 5
           EOF
-
