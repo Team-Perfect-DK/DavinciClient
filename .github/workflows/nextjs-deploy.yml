@@ -26,18 +26,18 @@ jobs:
             git switch main
             git pull origin main
 
-            docker-compose stop nextjs || true
-            docker-compose rm -f nextjs || true
+            docker compose stop nextjs || true
+            docker compose rm -f nextjs || true
 
             echo "빌드 시작"
-            docker-compose build nextjs &
+            docker compose build nextjs &
 
             while kill -0 $! 2> /dev/null; do
               echo "🛠 빌드 중... $(date)"
               sleep 10
             done
 
-            docker-compose up -d --force-recreate nextjs
+            docker compose up -d --force-recreate nextjs
 
             echo "배포 완료"
             sleep 5
