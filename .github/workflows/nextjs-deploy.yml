@@ -26,8 +26,9 @@ jobs:
             git switch main
             git pull origin main
 
-            docker compose stop nextjs || true
-            docker compose rm -f nextjs || true
+            docker compose down --remove-orphans || true
+            docker rm -f davinci-nextjs || true
+            docker ps -q --filter "publish=3000" | xargs -r docker rm -f || true
 
             echo "Docker cache cleanup"
             docker system prune -af || true
