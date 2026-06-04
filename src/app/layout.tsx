@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import AuthGuard from "@/components/AuthGuard";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -28,6 +29,7 @@ export default function RootLayout({
         <link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@400;700;900&display=swap" rel="stylesheet"></link>
       </head>
       <body className={`${geistSans.variable} ${geistMono.variable}`}>
+        <AuthGuard />
         {children}
       </body>
     </html>

@@ -1,27 +1,22 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
-import { useRouter, useParams } from "next/navigation";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useParams, useRouter } from "next/navigation";
+import { CompatClient } from "@stomp/stompjs";
 import {
   fetchRoomByRoomCode,
-  leaveRoom,
   joinRoomAsGuest,
+  leaveRoom,
 } from "@/app/api/room";
+import GameEndOverlay from "@/components/GameEndOverlay";
+import GlobalClientHandler from "@/components/GlobalClientHandler";
 import {
   connectGameSocket,
   disconnectSocket,
   sendGuessMessage,
+  sendSocketMessage,
   sendStartMessage,
 } from "@/utils/stompClient";
-import { CompatClient } from "@stomp/stompjs";
-import dynamic from "next/dynamic";
-import GameEndOverlay from "@/components/GameEndOverlay";
-import GlobalClientHandler from "@/components/GlobalClientHandler";
-
-// 폭죽 라이브러리 동적
-const ReactCanvasConfetti = dynamic(() => import("react-canvas-confetti"), {
-  ssr: false,
-});
 
 interface Room {
   id: string;
@@ -48,10 +43,33 @@ interface BroadcastMessage {
   payload?: any;
 }
 
+type LogTone = "normal" | "success" | "danger" | "accent";
+
+interface GameLog {
+  id: number;
+  message: string;
+  tone?: LogTone;
+}
+
+interface DialogState {
+  title: string;
+  message: string;
+  confirmText?: string;
+  cancelText?: string;
+  tone?: "normal" | "danger";
+  onConfirm?: () => void;
+}
+
+const TOTAL_DECK_SIZE = 24;
+const GUESS_NUMBERS = Array.from({ length: 12 }, (_, index) => index);
 
 export default function RoomPage() {
   const router = useRouter();
-  const { roomCode } = useParams();
+  const params = useParams();
+  const roomCode = Array.isArray(params.roomCode)
+    ? params.roomCode[0]
+    : params.roomCode;
+
   const [room, setRoom] = useState<Room | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -73,32 +91,86 @@ export default function RoomPage() {
   const [isGameEnded, setIsGameEnded] = useState(false);
   const [countdown, setCountdown] = useState<number>(5);
   const [deckEmpty, setDeckEmpty] = useState(false);
+  const [flippedCards, setFlippedCards] = useState<number[]>([]);
+  const [hasGuessedOnce, setHasGuessedOnce] = useState(false);
+  const [guessModalCard, setGuessModalCard] = useState<GameCard | null>(null);
+  const [selectedGuessNumber, setSelectedGuessNumber] = useState<number | null>(
+    null
+  );
+  const [logs, setLogs] = useState<GameLog[]>([]);
+  const [socketReady, setSocketReady] = useState(false);
+  const [isLeavingRoom, setIsLeavingRoom] = useState(false);
+  const [dialog, setDialog] = useState<DialogState | null>(null);
 
   const countdownRef = useRef<NodeJS.Timeout | null>(null);
-  const confettiRef = useRef<any>(null);
   const stompClientRef = useRef<CompatClient | null>(null);
-
-  const [flippedCards, setFlippedCards] = useState<number[]>([]);
-
-
-  // guess 1회라도 했는지 여부
-  const [hasGuessedOnce, setHasGuessedOnce] = useState(false);
-
-  // 이전 턴의 userId 저장
   const prevTurnUserIdRef = useRef<string | null>(null);
+  const isLeavingRoomRef = useRef(false);
+  const logIdRef = useRef(0);
 
-  // 닉네임으로 userId 변환
-  const getNicknameById = (id?: string | null) => {
-    if (!room || !id) return "";
-    if (id === room.hostId) return room.hostNickname;
-    if (id === room.guestId) return room.guestNickname ?? "";
-    return "";
-  };
+  const sortCards = useCallback((cardList: GameCard[]) => {
+    return [...cardList].sort((a, b) => {
+      if (a.number === b.number) {
+        return a.color === "WHITE" && b.color === "BLACK" ? -1 : 1;
+      }
+      return a.number - b.number;
+    });
+  }, []);
+
+  const addLog = useCallback((message: string, tone: LogTone = "normal") => {
+    setLogs((prev) => [
+      { id: ++logIdRef.current, message, tone },
+      ...prev.slice(0, 8),
+    ]);
+  }, []);
+
+  const showNotice = useCallback((title: string, message: string) => {
+    setDialog({
+      title,
+      message,
+      confirmText: "확인",
+    });
+  }, []);
+
+  const getNicknameById = useCallback(
+    (id?: string | null) => {
+      if (!room || !id) return "";
+      if (id === room.hostId) return room.hostNickname;
+      if (id === room.guestId) return room.guestNickname ?? "";
+      return "";
+    },
+    [room]
+  );
+
+  const myNickname = useMemo(() => {
+    if (!room || !userId) return "나";
+    return userId === room.hostId
+      ? room.hostNickname
+      : room.guestNickname ?? "나";
+  }, [room, userId]);
+
+  const opponentNickname = useMemo(() => {
+    if (!room || !userId) return "상대";
+    if (userId === room.hostId) return room.guestNickname ?? "대기 중";
+    return room.hostNickname || "상대";
+  }, [room, userId]);
+
+  const isMyTurn = Boolean(userId && currentTurn && userId === currentTurn);
+  const canGuess = isMyTurn && hasDrawn;
+  const canPass = isMyTurn && hasDrawn && hasGuessedOnce;
+  const remainingTiles = Math.max(
+    TOTAL_DECK_SIZE - myCards.length - opponentCards.length,
+    0
+  );
 
   useEffect(() => {
     const id = localStorage.getItem("sessionId");
-    if (id) setUserId(id);
-  }, []);
+    if (id) {
+      setUserId(id);
+    } else {
+      router.replace("/");
+    }
+  }, [router]);
 
   useEffect(() => {
     prevTurnUserIdRef.current = currentTurn;
@@ -117,40 +189,56 @@ export default function RoomPage() {
         case "GAME_STARTED": {
           setDeckEmpty(false);
           const allCards: GameCard[] = message.payload.cards || [];
-          const my = allCards.filter(c => c.userId === userId);
-          const opp = allCards.filter(c => c.userId && c.userId !== userId);
+          const my = allCards.filter((card) => card.userId === userId);
+          const opponent = allCards.filter(
+            (card) => card.userId && card.userId !== userId
+          );
           setCards(allCards);
           setMyCards(sortCards(my));
-          setOpponentCards(sortCards(opp));
-          setRoom(prev => prev ? { ...prev, status: "PLAYING" } : prev);
-          if (message.payload.currentTurnPlayerId) {
-            setCurrentTurn(message.payload.currentTurnPlayerId);
-          }
+          setOpponentCards(sortCards(opponent));
+          setRoom((prev) =>
+            prev ? { ...prev, status: "PLAYING" } : prev
+          );
+          setCurrentTurn(message.payload.currentTurnPlayerId ?? null);
           setHasDrawn(false);
           setGuessResult(null);
           setHasGuessedOnce(false);
+          setLogs([]);
+          addLog("게임이 시작되었습니다.", "accent");
           break;
         }
 
         case "CARD_DRAWN": {
-          const { card, userId: drawnUserId, color, deckEmpty } = message.payload;
-          setDeckEmpty(!!deckEmpty);
+          const {
+            card,
+            userId: drawnUserId,
+            color,
+            deckEmpty: nextDeckEmpty,
+          } = message.payload;
+          const nickname =
+            drawnUserId === userId ? myNickname : opponentNickname;
+          setDeckEmpty(!!nextDeckEmpty);
           if (drawnUserId === userId) {
-            setMyCards(prev => sortCards([...prev, card]));
+            setMyCards((prev) => sortCards([...prev, card]));
           } else {
-            setOpponentCards(prev => sortCards([...prev, card]));
+            setOpponentCards((prev) => sortCards([...prev, card]));
           }
+          setCards((prev) => [...prev, card]);
           setHasDrawn(true);
           setDrawModalOpen(false);
           setDrawFailMessage(null);
+          addLog(
+            `${nickname}님이 ${color === "BLACK" ? "검은" : "흰"} 타일을 뽑았습니다.`,
+            "normal"
+          );
           break;
         }
 
-        case "DRAW_FAILED": {
-          setDrawFailMessage(message.payload.reason || "카드 뽑기 실패");
+        case "DRAW_FAILED":
+          setDrawFailMessage(message.payload.reason || "타일을 뽑지 못했습니다.");
           setDrawModalOpen(false);
+          addLog("타일 뽑기에 실패했습니다.", "danger");
           break;
-        }
 
         case "CARD_OPENED": {
           const {
@@ -164,57 +252,87 @@ export default function RoomPage() {
           } = message.payload;
           setCurrentTurn(nextTurnUserId);
 
-          // 전체 카드 상태 업데이트
           if (openedCardInfo) {
-            setCards(prev =>
-              prev.map(c => c.id === openedCardInfo.id ? { ...c, ...openedCardInfo } : c)
+            setCards((prev) =>
+              prev.map((card) =>
+                card.id === openedCardInfo.id ? { ...card, ...openedCardInfo } : card
+              )
             );
-            setMyCards(prev =>
-              prev.map(c => c.id === openedCardInfo.id ? { ...c, ...openedCardInfo } : c)
+            setMyCards((prev) =>
+              prev.map((card) =>
+                card.id === openedCardInfo.id ? { ...card, ...openedCardInfo } : card
+              )
             );
-            setOpponentCards(prev =>
-              prev.map(c => c.id === openedCardInfo.id ? { ...c, ...openedCardInfo } : c)
+            setOpponentCards((prev) =>
+              prev.map((card) =>
+                card.id === openedCardInfo.id ? { ...card, ...openedCardInfo } : card
+              )
             );
 
-            // flip 애니메이션 트리거
-            setTimeout(() => {
-              setFlippedCards(prev => [...prev, openedCardInfo.id]);
+            window.setTimeout(() => {
+              setFlippedCards((prev) =>
+                prev.includes(openedCardInfo.id)
+                  ? prev
+                  : [...prev, openedCardInfo.id]
+              );
             }, 30);
           }
-          // 내가 guess한 턴에만 guessResult를 표시
+
           const wasMyTurn = prevTurnUserIdRef.current === userId;
+          const ownerNickname =
+            openedCardOwnerNickname ?? getNicknameById(openedCardOwnerId);
+
           if (wasMyTurn) {
             setHasDrawn(true);
-            setHasGuessedOnce(true); // guess 한 번이라도 했으면 true
+            setHasGuessedOnce(true);
             setGuessResult({
               correct,
               cardId,
-              openedCardOwnerNickname: openedCardOwnerNickname ?? getNicknameById(openedCardOwnerId),
+              openedCardOwnerNickname: ownerNickname,
               guessedNumber,
             });
           } else {
             setHasDrawn(false);
             setGuessResult(null);
           }
-          setDrawModalOpen(false);
+
+          addLog(
+            correct
+              ? `적중! ${ownerNickname}님의 타일은 ${guessedNumber}였습니다.`
+              : `실패! 추측한 숫자 ${guessedNumber}가 아니었습니다.`,
+            correct ? "success" : "danger"
+          );
+          setGuessModalCard(null);
+          setSelectedGuessNumber(null);
           break;
         }
 
-        case "TURN_CHANGED": {
+        case "TURN_CHANGED":
           setCurrentTurn(message.payload.nextTurnUserId);
           setHasDrawn(false);
           setGuessResult(null);
-          setHasGuessedOnce(false); // 턴이 바뀌면 초기화
+          setHasGuessedOnce(false);
+          addLog(`${getNicknameById(message.payload.nextTurnUserId)}님의 차례입니다.`, "accent");
           break;
-        }
 
         case "GAME_ENDED":
           setWinner(message.payload.winnerNickname);
           setIsGameEnded(true);
-          setRoom((prev) => prev ? { ...prev, status: "ENDED", winnerNickname: message.payload.winnerNickname } : prev);
+          setDrawModalOpen(false);
+          setGuessModalCard(null);
+          setSelectedGuessNumber(null);
+          setRoom((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  status: "ENDED",
+                  winnerNickname: message.payload.winnerNickname,
+                }
+              : prev
+          );
           setCountdown(5);
+          addLog(`${message.payload.winnerNickname}님이 승리했습니다.`, "success");
 
-          // 카운트다운 시작
           if (countdownRef.current) clearInterval(countdownRef.current);
           countdownRef.current = setInterval(() => {
             setCountdown((prev) => {
@@ -222,7 +340,15 @@ export default function RoomPage() {
                 clearInterval(countdownRef.current!);
                 setWinner(null);
                 setIsGameEnded(false);
-                setRoom((prev) => prev ? { ...prev, status: "WAITING", winnerNickname: undefined } : prev);
+                setRoom((prevRoom) =>
+                  prevRoom
+                    ? {
+                        ...prevRoom,
+                        status: "WAITING",
+                        winnerNickname: undefined,
+                      }
+                    : prevRoom
+                );
                 setCurrentTurn(null);
                 setHasDrawn(false);
                 setGuessResult(null);
@@ -230,6 +356,8 @@ export default function RoomPage() {
                 setCards([]);
                 setMyCards([]);
                 setOpponentCards([]);
+                setFlippedCards([]);
+                setLogs([]);
                 return 5;
               }
               return prev - 1;
@@ -244,8 +372,17 @@ export default function RoomPage() {
           break;
 
         case "GAME_RESET":
-          alert(message.payload.reason || "상대방이 게임을 나가서 게임이 리셋되었습니다.");
-          setRoom((prev) => prev ? { ...prev, status: "WAITING", winnerNickname: undefined } : prev);
+          if (isLeavingRoomRef.current) {
+            break;
+          }
+          showNotice(
+            "게임이 종료되었습니다",
+            message.payload.reason ||
+              "상대방이 나가 게임이 대기 상태로 돌아갔습니다."
+          );
+          setRoom((prev) =>
+            prev ? { ...prev, status: "WAITING", winnerNickname: undefined } : prev
+          );
           setWinner(null);
           setCurrentTurn(null);
           setHasDrawn(false);
@@ -254,6 +391,8 @@ export default function RoomPage() {
           setCards([]);
           setMyCards([]);
           setOpponentCards([]);
+          setFlippedCards([]);
+          setLogs([]);
           break;
 
         default:
@@ -261,202 +400,256 @@ export default function RoomPage() {
       }
     };
 
-    const client = connectGameSocket(roomCode as string, handleMessage);
+    setSocketReady(false);
+    const client = connectGameSocket(roomCode, handleMessage, {
+      onConnect: () => {
+        setSocketReady(true);
+        addLog("서버와 연결되었습니다.", "success");
+      },
+      onDisconnect: () => {
+        setSocketReady(false);
+      },
+      onError: (socketError) => {
+        console.error("STOMP connection error:", socketError);
+        setSocketReady(false);
+        addLog("서버 연결이 불안정합니다. 잠시 후 다시 시도해주세요.", "danger");
+      },
+    });
     stompClientRef.current = client;
-    fetchRoomByRoomCode(roomCode as string)
+
+    fetchRoomByRoomCode(roomCode)
       .then(async (data) => {
-        if (!data) throw new Error("방 정보가 없습니다.");
+        if (!data) throw new Error("방 정보를 찾을 수 없습니다.");
         let finalRoom: Room;
-        if (
-          data &&
-          userId &&
-          data.hostId &&
-          !data.guestId &&
-          data.hostId !== userId
-        ) {
+        if (data.hostId && !data.guestId && data.hostId !== userId) {
           const joined = await joinRoomAsGuest(data.roomCode, userId);
           finalRoom =
             joined.action === "ROOM_UPDATED" ? joined.payload : joined;
         } else {
-          finalRoom = data;
+          finalRoom = data as Room;
         }
         setRoom(finalRoom);
         setLoading(false);
       })
       .catch((err) => {
         console.error(err);
-        setError("방 정보를 불러올 수 없습니다.");
+        setError("방 정보를 불러오지 못했습니다.");
         setLoading(false);
       });
 
     return () => {
+      setSocketReady(false);
       disconnectSocket();
+      stompClientRef.current = null;
       if (countdownRef.current) clearInterval(countdownRef.current);
     };
-  }, [roomCode, userId]);
+  }, [
+    addLog,
+    roomCode,
+    router,
+    showNotice,
+    sortCards,
+    userId,
+  ]);
 
-  // 폭죽 효과 트리거
   useEffect(() => {
-    if (isGameEnded && confettiRef.current) {
-      confettiRef.current({
-        particleCount: 200,
-        spread: 120,
-        origin: { y: 0.6 },
-      });
+    if (deckEmpty && isMyTurn && !hasDrawn && room?.status === "PLAYING") {
+      setHasDrawn(true);
     }
-  }, [isGameEnded]);
+  }, [deckEmpty, hasDrawn, isMyTurn, room?.status]);
 
-  const sortCards = (cards: GameCard[]) =>
-    [...cards].sort((a, b) => {
-      if (a.number === b.number) {
-        return a.color === "WHITE" && b.color === "BLACK" ? -1 : 1;
-      }
-      return a.number - b.number;
-    });
-
-  const isMyTurn = () => {
-    if (!userId || !currentTurn) return false;
-    return userId === currentTurn;
-  };
-
-  // 카드 더미에서 한 장 뽑기
   const handleDrawCard = (color: "WHITE" | "BLACK") => {
     if (!room || !userId || !stompClientRef.current) return;
-    stompClientRef.current.send(
+    const sent = sendSocketMessage(stompClientRef.current,
       "/app/rooms/draw",
-      {},
-      JSON.stringify({ roomCode: room.roomCode, userId, color })
+      { roomCode: room.roomCode, userId, color }
     );
+    if (!sent) {
+      setDrawFailMessage("서버 연결이 아직 준비되지 않았습니다.");
+    }
   };
 
-  // 카드 맞추기는 카드 뽑은 후 여러 번 가능
-  const canGuess = isMyTurn() && hasDrawn;
-  // 턴 넘기기: 내 턴이고, 뽑았고, guess 한 번이라도 했으면
-  const canPass = isMyTurn() && hasDrawn && hasGuessedOnce;
+  const openGuessModal = (card: GameCard) => {
+    if (!canGuess || card.status === "OPEN") return;
+    setGuessModalCard(card);
+    setSelectedGuessNumber(null);
+  };
 
-  const handleGuess = (cardId: number) => {
-    if (!canGuess) return;
+  const handleGuessSubmit = () => {
     const client = stompClientRef.current;
-    if (!client || !client.connected) return;
-    if (!room || !userId || !client) return;
-
-    const input = prompt("상대 카드의 숫자를 추측해보세요 (0~11)");
-    // 취소 or 빈 입력일 경우 아무 것도 하지 않고 return
-    if (input === null || input.trim() === "") return;
-
-    const guessedNumber = Number(input);
-    if (isNaN(guessedNumber)) {
-      alert("숫자를 정확히 입력하세요.");
+    if (
+      selectedGuessNumber === null ||
+      !guessModalCard ||
+      !client ||
+      !client.connected ||
+      !room ||
+      !userId
+    ) {
       return;
     }
 
-    sendGuessMessage(client, {
+    const sent = sendGuessMessage(client, {
       roomCode: room.roomCode,
       userId,
-      targetCardId: cardId,
-      guessedNumber,
+      targetCardId: guessModalCard.id,
+      guessedNumber: selectedGuessNumber,
     });
+    if (!sent) {
+      addLog("서버 연결 후 다시 시도해주세요.", "danger");
+    }
   };
 
-  // 턴 넘기기
   const handlePassTurn = () => {
-    if (!canPass) return;
-    if (!room || !userId || !stompClientRef.current) return;
-    stompClientRef.current.send(
+    if (!canPass || !room || !userId || !stompClientRef.current) return;
+    const sent = sendSocketMessage(stompClientRef.current,
       "/app/rooms/turn/pass",
-      {},
-      JSON.stringify({ roomCode: room.roomCode, userId })
+      { roomCode: room.roomCode, userId }
     );
-    setHasDrawn(false);
-    setHasGuessedOnce(false);
-  };
-
-  const handleStartGame = async () => {
-    if (!room) return;
-    if (!room.guestId) {
-      alert("게스트가 있어야 게임을 시작할 수 있습니다.");
+    if (!sent) {
+      addLog("서버 연결 후 다시 시도해주세요.", "danger");
       return;
     }
-    sendStartMessage(stompClientRef.current!, room.roomCode);
+    setHasDrawn(false);
+    setHasGuessedOnce(false);
+    addLog(`${myNickname}님이 턴을 넘겼습니다.`, "normal");
+  };
+
+  const handleStartGame = () => {
+    if (!room || !stompClientRef.current) return;
+    if (!room.guestId) {
+      showNotice("아직 시작할 수 없습니다", "상대방이 입장해야 게임을 시작할 수 있습니다.");
+      return;
+    }
+    const sent = sendStartMessage(stompClientRef.current, room.roomCode);
+    if (!sent) {
+      showNotice(
+        "서버 연결 대기 중",
+        "서버 연결이 아직 준비되지 않았습니다. 잠시 후 다시 눌러주세요."
+      );
+    }
   };
 
   const handleLeaveRoom = async () => {
-    if (!room || !userId) return;
+    if (!room || !userId || isLeavingRoom) return;
+    if (room.status === "PLAYING") {
+      setDialog({
+        title: "게임을 나갈까요?",
+        message: "게임 도중에 나가면 현재 게임이 종료됩니다.",
+        confirmText: "나가기",
+        cancelText: "취소",
+        tone: "danger",
+        onConfirm: () => {
+          void leaveCurrentRoom();
+        },
+      });
+      return;
+    }
+    await leaveCurrentRoom();
+  };
+
+  const leaveCurrentRoom = async () => {
+    if (!room || !userId || isLeavingRoomRef.current) return;
+    isLeavingRoomRef.current = true;
+    setIsLeavingRoom(true);
     try {
       await leaveRoom(room.roomCode, userId);
-      router.push("/lobby");
-    } catch {
-      alert("방을 나갈 수 없습니다.");
+    } catch (leaveError) {
+      console.error("Failed to leave room:", leaveError);
+      showNotice("로비로 이동합니다", "방 상태 정리에 실패했지만 로비로 이동합니다.");
+    } finally {
+      disconnectSocket();
+      stompClientRef.current = null;
+      setSocketReady(false);
+      router.replace("/lobby");
     }
   };
 
-  // 카드 덱이 비어있을 때만 자동으로 hasDrawn true
-  useEffect(() => {
-    if (deckEmpty && isMyTurn() && !hasDrawn && room?.status === "PLAYING") {
-      setHasDrawn(true);
-    }
-  }, [deckEmpty, isMyTurn(), hasDrawn, room?.status]);
-
   const wasMyCardGuessed = (card: GameCard) =>
     card.userId === userId &&
-    flippedCards.includes(card.id); // 이 카드가 맞혀진 카드인지
+    (card.status === "OPEN" || flippedCards.includes(card.id));
 
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#f4f4f1] flex items-center justify-center font-Arita text-xl font-bold">
+        로딩 중...
+      </div>
+    );
+  }
 
-  if (loading) return <p>로딩 중...</p>;
-  if (error) return <p className="text-red-500">{error}</p>;
-  if (!room) return <p>방을 찾을 수 없습니다.</p>;
+  if (error) {
+    return (
+      <div className="min-h-screen bg-[#f4f4f1] flex items-center justify-center text-red-600 font-bold">
+        {error}
+      </div>
+    );
+  }
 
+  if (!room) {
+    return (
+      <div className="min-h-screen bg-[#f4f4f1] flex items-center justify-center font-bold">
+        방을 찾을 수 없습니다.
+      </div>
+    );
+  }
 
   return (
     <>
       <GlobalClientHandler />
-      <div className={`font-Arita font-semibold min-h-screen w-full flex flex-col items-center justify-center bg-gradient-to-r from-[#0B0400] to-[#462512] relative pt-12 ${room?.status === "ENDED"
-        ? "bg-gradient-to-b from-green-100 to-gray-300"
-        : "bg-white"
-        }`}>
-        {/* 프레임 이미지 */}
-        <img
-          src="/img/goldframe.svg"
-          alt="gold frame"
-          className="absolute w-[95%] max-w-[1550px] h-auto pointer-events-none z-0"
-        />
-        <div className="w-full h-full rounded-lg shadow-lg flex justify-evenly items-end mb-4">
-          <h1 className="text-4xl font-Arita text-[#EDAE51] ">{room.title}</h1>
-          <p
-            className={`text-lg font-semibold ${room.status === "WAITING"
-              ? "text-green-500"
-              : room.status === "PLAYING"
-                ? "text-red-500"
-                : "text-gray-500"
-              }`}
-          >
-            {room.status === "WAITING"
-              ? "대기 중"
-              : room.status === "PLAYING"
-                ? "게임 중"
-                : "게임 종료"}
-          </p>
-        </div>
-        <div className="w-95% min-w-[1100px] h-full min-h-[300px] max-h-[700px] bg-white z-10 p-6 rounded-lg shadow-lg display flex flex-col items-center">
+      <main className="min-h-screen bg-[#f4f4f1] px-4 py-3 font-Arita text-[#101014]">
+        <section className="mx-auto flex min-h-[calc(100vh-24px)] w-full max-w-[1500px] flex-col border-[3px] border-black bg-white shadow-[10px_10px_0_#000]">
+          <header className="flex flex-col gap-4 border-b-[3px] border-black px-6 py-5 sm:px-8 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <p className="mb-2 text-sm font-black uppercase text-[#11936e]">
+                Game Room
+              </p>
+              <h1 className="text-4xl font-black leading-none sm:text-5xl">
+                {room.title}
+              </h1>
+              <p className="mt-4 text-base font-black text-[#5b5b63]">
+                방 코드 {room.roomCode}
+              </p>
+            </div>
 
+            <div className="flex items-end gap-6">
+              <div className="text-right">
+                <p className="text-xs font-black text-[#6b6b72]">현재 턴</p>
+                <p
+                  className={`text-2xl font-black ${
+                    isMyTurn ? "text-[#11936e]" : "text-[#f0263e]"
+                  }`}
+                >
+                  {currentTurn
+                    ? isMyTurn
+                      ? "당신의 차례"
+                      : `${getNicknameById(currentTurn)}의 차례`
+                    : room.status === "WAITING"
+                      ? "대기 중"
+                      : "준비 중"}
+                </p>
+              </div>
+              <button
+                onClick={handleLeaveRoom}
+                disabled={isLeavingRoom}
+                className="border-[3px] border-black bg-white px-5 py-3 text-sm font-black shadow-[5px_5px_0_#000] transition hover:-translate-y-0.5 hover:shadow-[7px_7px_0_#000] disabled:cursor-not-allowed disabled:bg-[#d7d7d7] disabled:shadow-none"
+              >
+                {isLeavingRoom ? "나가는 중" : "나가기"}
+              </button>
+            </div>
+          </header>
 
-          {/* 게임 종료 오버레이 */}
           {winner && room.status === "ENDED" && (
-            <div className="fixed inset-0 bg-black bg-opacity-70 flex flex-col items-center justify-center z-50 transition-opacity duration-700">
+            <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/75">
               <GameEndOverlay isGameEnded={isGameEnded} />
-              <div className="bg-white px-14 py-10 rounded-3xl shadow-2xl border-8 border-green-300 ring-4 ring-green-200 animate-fadeIn flex flex-col items-center relative z-10">
-                <span className="text-5xl font-extrabold text-green-800 mb-4 drop-shadow animate-bounce">
-                  🎉 게임 종료!
-                </span>
-                <span className="text-3xl font-bold text-green-600 mb-2 animate-pulse">
+              <div className="relative z-10 flex flex-col items-center border-[4px] border-black bg-white px-12 py-10 text-center shadow-[12px_12px_0_#11936e]">
+                <span className="text-5xl font-black">게임 종료</span>
+                <span className="mt-4 text-3xl font-black text-[#11936e]">
                   승자: {winner}
                 </span>
-                <span className="text-xl text-gray-700 mt-6 mb-2">
-                  다음 게임까지{" "}
-                  <span className="font-extrabold text-red-500">{countdown}</span>초
+                <span className="mt-6 text-lg font-bold text-[#5b5b63]">
+                  다음 게임까지 {countdown}초
                 </span>
                 <button
-                  className="mt-8 px-8 py-3 bg-blue-500 text-white rounded-xl shadow-xl hover:bg-blue-600 text-lg font-bold"
+                  className="mt-8 border-[3px] border-black bg-black px-8 py-3 text-lg font-black text-white shadow-[6px_6px_0_#11936e]"
                   onClick={handleLeaveRoom}
                 >
                   로비로 돌아가기
@@ -465,200 +658,455 @@ export default function RoomPage() {
             </div>
           )}
 
+          <div className="grid flex-1 lg:grid-cols-[1fr_390px]">
+            <section className="flex flex-col gap-6 px-6 py-5 sm:px-8">
+              <div className="grid gap-4 border-b-[3px] border-black pb-5 sm:grid-cols-2">
+                <PlayerBadge
+                  label="상대"
+                  nickname={opponentNickname}
+                  color="red"
+                  isActive={currentTurn !== userId && room.status === "PLAYING"}
+                />
+                <PlayerBadge
+                  label="나"
+                  nickname={myNickname}
+                  color="green"
+                  isActive={isMyTurn}
+                />
+              </div>
 
-
-          {/* 호스트/게스트 정보 */}
-          <div className="flex justify-center items-center w-full max-w-md mb-4">
-            <div className="w-1/2 text-center border-r-2 border-gray-300">
-              <h2 className="text-2xl font-bold">👑 호스트</h2>
-              <p className="text-blue-500 font-semibold">{room.hostNickname || "없음"}</p>
-            </div>
-            <div className="w-1/2 text-center">
-              <h2 className="text-2xl font-bold">👤 게스트</h2>
-              <p className="text-red-500 font-semibold">{room.guestNickname || "없음"}</p>
-            </div>
-          </div>
-
-          {/* 현재 턴 안내 */}
-          {!winner && currentTurn && room.status !== "ENDED" && (
-            <p className="text-md text-[#EDAE51] font-semibold">
-              현재 턴: <span className="font-bold ">{getNicknameById(currentTurn)}</span>
-            </p>
-          )}
-
-          {/* 게임 시작/나가기 버튼 */}
-          <div className="mt-2 flex gap-4">
-            {room.hostId === userId && room.status === "WAITING" && (
-              <button
-                onClick={handleStartGame}
-                className="px-4 py-2 bg-[#EDAE51] text-white font-semibold rounded-lg shadow-md hover:bg-[#462512]"
-              >
-                게임 시작
-              </button>
-            )}
-            {room.status === "WAITING" && (
-              <button
-                onClick={handleLeaveRoom}
-                className="px-4 py-2 bg-gray-500 text-white font-semibold rounded-lg shadow-md hover:bg-gray-600"
-              >
-                나가기
-              </button>
-            )}
-          </div>
-          {/* 카드 영역 */}
-          {room.status !== "ENDED" && (
-            <div className="mt-6">
-              {/* 내 카드 */}
-              <h3 className="font-bold">내 카드</h3>
-              <div className="flex gap-4 mt-2">
-                {myCards.map((card) => {
-                  const guessed = wasMyCardGuessed(card);
-
-                  return (
-                    <div
-                      key={card.id}
-                      className={`card-wrapper ${guessed ? "animate-card-flip" : ""
-                        } transition-transform duration-700`}
-                    >
-                      <div
-                        className={`card-face ${card.color === "BLACK" ? "bg-black" : "bg-white"
-                          } ${guessed
-                            ? "border-red-500 border-[4px] shadow-red text-red-500"
-                            : `border-gray-300 border-2 shadow-xl ${card.color === "BLACK" ? "text-white" : "text-black"
-                            }`
-                          } rounded-xl font-bold text-[28px] flex items-center justify-center`}
+              {room.status === "WAITING" ? (
+                <div className="flex flex-1 flex-col items-center justify-center gap-5 py-20 text-center">
+                  <p className="text-3xl font-black">상대 입장을 기다리는 중</p>
+                  <p className="max-w-md text-base font-bold text-[#666]">
+                    두 명이 모두 입장하면 방장이 게임을 시작할 수 있습니다.
+                  </p>
+                  <div className="flex gap-3">
+                    {room.hostId === userId && (
+                      <button
+                        onClick={handleStartGame}
+                        disabled={!socketReady}
+                        className="border-[3px] border-black bg-black px-6 py-3 font-black text-white shadow-[6px_6px_0_#11936e] disabled:cursor-not-allowed disabled:bg-[#b7b7b7] disabled:shadow-none"
                       >
-                        {card.number}
-                      </div>
-                    </div>
-                  );
-                })}
-
-
-
-              </div>
-
-
-
-              {/* 상대 카드 */}
-              <h3 className="mt-6 font-bold">상대 카드</h3>
-              <div className="flex gap-4 mt-2">
-                {opponentCards.map((card) => {
-                  const isFlipped = flippedCards.includes(card.id) || card.status === "OPEN";
-
-                  return (
-                    <div
-                      key={card.id}
-                      className="card-wrapper hover:scale-[1.03] transition-transform duration-200"
-                      onClick={() =>
-                        canGuess && card.status === "CLOSE" && handleGuess(card.id)
-                      }
-                      style={{
-                        cursor: canGuess && card.status === "CLOSE" ? "pointer" : "default",
-                      }}
-                    >
-                      <div className={`card-inner ${isFlipped ? "is-flipped" : ""}`}>
-                        {/* 앞면: 물음표 */}
-                        <div
-                          className={`card-face card-front ${card.color === "BLACK"
-                            ? "bg-black text-white"
-                            : "bg-white text-black"
-                            }`}
-                        >
-                          <span className="text-5xl leading-none">?</span>
-                        </div>
-
-                        {/* 뒷면: 숫자 */}
-                        <div
-                          className={`card-face card-back ${card.color === "BLACK"
-                            ? "bg-black text-red-500 border-red-500 shadow-red"
-                            : "bg-white text-red-500 border-red-500 shadow-red"
-                            }`}
-                        >
-                          {card.number}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-
-
-
-          {/* 카드 뽑기/턴 넘기기 버튼 */}
-          {isMyTurn() && !hasDrawn && room.status !== "ENDED" && !deckEmpty && (
-            <div className="mt-6 flex flex-col items-center">
-              <button
-                className="px-4 py-2 bg-[#EDAE51] text-white rounded font-semibold shadow mb-2"
-                onClick={() => setDrawModalOpen(true)}
-              >
-                카드 더미에서 한 장 뽑기
-              </button>
-              {drawFailMessage && (
-                <div className="text-red-500">{drawFailMessage}</div>
-              )}
-            </div>
-          )}
-          {canPass && room.status !== "ENDED" && (
-            <div className="mt-6 flex flex-col items-center">
-              <button
-                className="px-4 py-2 bg-gray-500 text-white rounded shadow"
-                onClick={handlePassTurn}
-              >
-                턴 넘기기
-              </button>
-            </div>
-          )}
-
-          {/* 카드 뽑기 모달 */}
-          {drawModalOpen && (
-            <div className="fixed top-0 left-0 w-full h-full bg-black bg-opacity-30 flex items-center justify-center z-50">
-              <div className="bg-white p-6 rounded shadow flex flex-col items-center">
-                <p className="mb-4 font-bold">어떤 색의 카드를 뽑을까요?</p>
-                <div className="flex gap-4">
-                  <button
-                    className="px-4 py-2 bg-white text-black border border-black rounded hover:bg-gray-100"
-                    onClick={() => handleDrawCard("WHITE")}
-                  >
-                    흰색 카드
-                  </button>
-                  <button
-                    className="px-4 py-2 bg-black text-white border border-black rounded hover:bg-gray-800"
-                    onClick={() => handleDrawCard("BLACK")}
-                  >
-                    검은색 카드
-                  </button>
+                        {socketReady ? "게임 시작" : "연결 중"}
+                      </button>
+                    )}
+                  </div>
                 </div>
-                <button
-                  className="mt-6 px-3 py-1 rounded bg-gray-300"
-                  onClick={() => setDrawModalOpen(false)}
-                >
-                  닫기
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* 정오답 결과 */}
-          {guessResult && room.status !== "ENDED" && (
-            <div className="mt-6 p-3 bg-gray-100 rounded shadow text-center">
-              {guessResult.correct ? (
-                <span className="text-green-600 font-bold">
-                  정답! {guessResult.openedCardOwnerNickname}의 카드({guessResult.guessedNumber})를 열었습니다.
-                </span>
               ) : (
-                <span className="text-red-600 font-bold">
-                  오답! 카드 한 장이 오픈되고, 턴이 넘어갑니다.
-                </span>
+                <div className="flex flex-col gap-6">
+                  <CardRow
+                    title={`${opponentNickname}의 타일`}
+                    countLabel={`TILE x ${opponentCards.length}`}
+                    cards={opponentCards}
+                    flippedCards={flippedCards}
+                    canGuess={canGuess}
+                    onCardClick={openGuessModal}
+                    isOpponent
+                  />
+
+                  <div className="h-[3px] w-full bg-black" />
+
+                  <CardRow
+                    title={`${myNickname}의 타일`}
+                    countLabel={`보유: ${myCards.length}`}
+                    cards={myCards}
+                    flippedCards={flippedCards}
+                    canGuess={false}
+                    onCardClick={() => undefined}
+                    isMyCardGuessed={wasMyCardGuessed}
+                  />
+                </div>
               )}
+
+              {guessResult && room.status !== "ENDED" && (
+                <div
+                  className={`border-[3px] border-black px-5 py-4 text-lg font-black shadow-[6px_6px_0_#000] ${
+                    guessResult.correct
+                      ? "bg-[#11936e] text-white"
+                      : "bg-[#f0263e] text-white"
+                  }`}
+                >
+                  {guessResult.correct
+                    ? `정답! ${guessResult.openedCardOwnerNickname}님의 타일은 ${guessResult.guessedNumber}였습니다.`
+                    : "오답! 내 타일 하나가 공개되고 턴이 상대에게 넘어갑니다."}
+                </div>
+              )}
+            </section>
+
+            <aside className="grid border-t-[3px] border-black lg:border-l-[3px] lg:border-t-0 lg:grid-rows-[auto_1fr]">
+              <section className="border-b-[3px] border-black px-6 py-5">
+                <p className="mb-5 text-xs font-black uppercase tracking-[0.24em] text-[#777]">
+                  행동
+                </p>
+                <button
+                  disabled={!socketReady || !isMyTurn || hasDrawn || deckEmpty || room.status !== "PLAYING"}
+                  onClick={() => setDrawModalOpen(true)}
+                  className="w-full border-[3px] border-black bg-[#1c1c1f] px-5 py-5 text-2xl font-black text-white shadow-[7px_7px_0_#000] transition enabled:hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:bg-[#b7b7b7] disabled:text-white disabled:shadow-none"
+                >
+                  타일 뽑기
+                  <span className="mt-2 block text-xs font-black tracking-[0.18em] text-[#20d498]">
+                    REMAINING: {remainingTiles}
+                  </span>
+                </button>
+
+                {drawFailMessage && (
+                  <p className="mt-4 text-sm font-black text-[#f0263e]">
+                    {drawFailMessage}
+                  </p>
+                )}
+
+                <button
+                  disabled={!socketReady || !canPass || room.status !== "PLAYING"}
+                  onClick={handlePassTurn}
+                  className="mt-5 w-full border-[3px] border-black bg-white px-5 py-4 text-lg font-black shadow-[5px_5px_0_#000] transition enabled:hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:border-[#b7b7b7] disabled:text-[#aaa] disabled:shadow-none"
+                >
+                  턴 넘기기
+                </button>
+              </section>
+
+              <section className="px-6 py-5">
+                <p className="mb-5 text-xs font-black uppercase tracking-[0.24em] text-[#999]">
+                  Game Logs
+                </p>
+                <div className="flex max-h-[360px] flex-col gap-3 overflow-y-auto pr-1">
+                  {logs.length > 0 ? (
+                    logs.map((log, index) => (
+                      <div
+                        key={log.id}
+                        className={`border-l-[3px] py-1 pl-4 text-sm font-black ${
+                          index === 0
+                            ? "border-black bg-[#1c1c1f] px-4 py-3 text-white"
+                            : log.tone === "success"
+                              ? "border-[#11936e] text-[#11936e]"
+                              : log.tone === "danger"
+                                ? "border-[#f0263e] text-[#101014]"
+                                : "border-[#d5d5d5] text-[#101014]"
+                        }`}
+                      >
+                        {index === 0 && (
+                          <span className="mb-1 block text-xs text-[#20d498]">
+                            최근 활동
+                          </span>
+                        )}
+                        {log.message}
+                      </div>
+                    ))
+                  ) : (
+                    <p className="border-l-[3px] border-[#d5d5d5] py-2 pl-4 text-sm font-black text-[#777]">
+                      게임 로그가 여기에 표시됩니다.
+                    </p>
+                  )}
+                </div>
+              </section>
+            </aside>
+          </div>
+        </section>
+
+        {drawModalOpen && (
+          <Modal title="어떤 색의 타일을 뽑을까요?" onClose={() => setDrawModalOpen(false)}>
+            <div className="grid grid-cols-2 gap-4">
+              <button
+                className="h-24 border-[3px] border-black bg-white text-xl font-black text-black shadow-[5px_5px_0_#000]"
+                onClick={() => handleDrawCard("WHITE")}
+              >
+                흰 타일
+              </button>
+              <button
+                className="h-24 border-[3px] border-black bg-black text-xl font-black text-white shadow-[5px_5px_0_#11936e]"
+                onClick={() => handleDrawCard("BLACK")}
+              >
+                검은 타일
+              </button>
             </div>
+          </Modal>
+        )}
+
+        {guessModalCard && (
+          <Modal
+            title={`${opponentNickname}의 타일 추측`}
+            onClose={() => {
+              setGuessModalCard(null);
+              setSelectedGuessNumber(null);
+            }}
+          >
+            <div className="flex flex-col gap-5">
+              <div className="flex items-center justify-between border-[3px] border-black px-4 py-3">
+                <span className="font-black">
+                  선택한 타일
+                </span>
+                <span
+                  className={`border-[3px] border-black px-4 py-2 text-xl font-black ${
+                    guessModalCard.color === "BLACK"
+                      ? "bg-black text-white"
+                      : "bg-white text-black"
+                  }`}
+                >
+                  ?
+                </span>
+              </div>
+
+              <div className="grid grid-cols-4 gap-2">
+                {GUESS_NUMBERS.map((number) => (
+                  <button
+                    key={number}
+                    onClick={() => setSelectedGuessNumber(number)}
+                    className={`h-12 border-[3px] border-black text-lg font-black transition ${
+                      selectedGuessNumber === number
+                        ? "bg-[#11936e] text-white shadow-[4px_4px_0_#000]"
+                        : "bg-white text-black"
+                    }`}
+                  >
+                    {number}
+                  </button>
+                ))}
+              </div>
+
+              <button
+                disabled={selectedGuessNumber === null}
+                onClick={handleGuessSubmit}
+                className="border-[3px] border-black bg-black px-5 py-4 text-lg font-black text-white shadow-[5px_5px_0_#11936e] disabled:cursor-not-allowed disabled:bg-[#b7b7b7] disabled:shadow-none"
+              >
+                결정
+              </button>
+            </div>
+          </Modal>
+        )}
+
+        {dialog && (
+          <GameDialog
+            {...dialog}
+            onClose={() => setDialog(null)}
+            onConfirm={() => {
+              const confirmAction = dialog.onConfirm;
+              setDialog(null);
+              confirmAction?.();
+            }}
+          />
+        )}
+      </main>
+    </>
+  );
+}
+
+function PlayerBadge({
+  label,
+  nickname,
+  color,
+  isActive,
+}: {
+  label: string;
+  nickname: string;
+  color: "red" | "green";
+  isActive: boolean;
+}) {
+  return (
+    <div className="flex items-center gap-3">
+      <span
+        className={`h-5 w-5 border-[3px] border-black ${
+          color === "green" ? "bg-[#20c997]" : "bg-[#f0263e]"
+        }`}
+      />
+      <div>
+        <p className="text-xs font-black text-[#777]">{label}</p>
+        <p className={`text-2xl font-black ${isActive ? "text-[#11936e]" : ""}`}>
+          {nickname}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function CardRow({
+  title,
+  countLabel,
+  cards,
+  flippedCards,
+  canGuess,
+  onCardClick,
+  isOpponent = false,
+  isMyCardGuessed,
+}: {
+  title: string;
+  countLabel: string;
+  cards: GameCard[];
+  flippedCards: number[];
+  canGuess: boolean;
+  onCardClick: (card: GameCard) => void;
+  isOpponent?: boolean;
+  isMyCardGuessed?: (card: GameCard) => boolean;
+}) {
+  return (
+    <section>
+      <div className="mb-8 flex items-center justify-between gap-4">
+        <h2 className="text-2xl font-black">{title}</h2>
+        <span className="border-[3px] border-black bg-white px-4 py-2 text-sm font-black shadow-[4px_4px_0_#000]">
+          {countLabel}
+        </span>
+      </div>
+      <div className="flex min-h-[122px] flex-wrap gap-4">
+        {cards.length > 0 ? (
+          cards.map((card) => {
+            const isFlipped = flippedCards.includes(card.id) || card.status === "OPEN";
+            const guessed = isMyCardGuessed?.(card) ?? false;
+
+            if (isOpponent) {
+              return (
+                <button
+                  type="button"
+                  key={card.id}
+                  disabled={!canGuess || card.status === "OPEN"}
+                  onClick={() => onCardClick(card)}
+                  className={`card-wrapper disabled:cursor-default ${
+                    isFlipped ? "-translate-y-[20%]" : ""
+                  } transition-transform duration-300`}
+                  aria-label="상대 타일 추측하기"
+                >
+                  <div
+                    className={`card-inner ${isFlipped ? "is-flipped" : ""} ${
+                      canGuess && card.status === "CLOSE"
+                        ? "transition-transform hover:-translate-y-1"
+                        : ""
+                    }`}
+                  >
+                    <div
+                      className={`card-face card-front rounded-none border-[3px] border-black ${
+                        card.color === "BLACK"
+                          ? "bg-[#1c1c1f] text-white"
+                          : "bg-white text-black"
+                      }`}
+                    >
+                      <span className="text-5xl leading-none">?</span>
+                    </div>
+                    <div
+                      className={`card-face card-back rounded-none border-[5px] border-[#ff123f] text-[#ff123f] shadow-[0_10px_18px_rgba(255,18,63,0.35)] ${
+                        card.color === "BLACK" ? "bg-[#1c1c1f]" : "bg-white"
+                      }`}
+                    >
+                      {card.number}
+                    </div>
+                  </div>
+                </button>
+              );
+            }
+
+            return (
+              <div
+                key={card.id}
+                className={`card-wrapper ${
+                  guessed ? "animate-card-open-rise" : ""
+                } transition-transform duration-300`}
+              >
+                <div
+                  className={`card-face rounded-none border-[3px] ${
+                    guessed
+                      ? `border-[5px] border-[#ff123f] text-[#ff123f] shadow-[0_10px_18px_rgba(255,18,63,0.35)] ${
+                          card.color === "BLACK" ? "bg-[#1c1c1f]" : "bg-white"
+                        }`
+                      : `border-black ${
+                          card.color === "BLACK"
+                            ? "bg-[#1c1c1f] text-white"
+                            : "bg-white text-black"
+                        }`
+                  }`}
+                >
+                  {card.number}
+                </div>
+              </div>
+            );
+          })
+        ) : (
+          <p className="flex min-h-[120px] items-center text-lg font-black text-[#777]">
+            아직 타일이 없습니다.
+          </p>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function Modal({
+  title,
+  children,
+  onClose,
+}: {
+  title: string;
+  children: React.ReactNode;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
+      <div className="w-full max-w-md border-[3px] border-black bg-white p-6 shadow-[10px_10px_0_#000]">
+        <div className="mb-6 flex items-start justify-between gap-4">
+          <h2 className="text-2xl font-black">{title}</h2>
+          <button
+            type="button"
+            onClick={onClose}
+            className="h-9 w-9 border-[3px] border-black bg-white text-xl font-black leading-none"
+            aria-label="닫기"
+          >
+            x
+          </button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function GameDialog({
+  title,
+  message,
+  confirmText = "확인",
+  cancelText,
+  tone = "normal",
+  onClose,
+  onConfirm,
+}: DialogState & {
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  const isDanger = tone === "danger";
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/55 px-4">
+      <div className="w-full max-w-md border-[3px] border-black bg-white p-6 shadow-[10px_10px_0_#000]">
+        <div className="mb-5 flex items-center gap-3">
+          <span
+            className={`h-5 w-5 border-[3px] border-black ${
+              isDanger ? "bg-[#ff123f]" : "bg-[#20c997]"
+            }`}
+          />
+          <p className="text-xs font-black uppercase tracking-[0.22em] text-[#777]">
+            Notice
+          </p>
+        </div>
+        <h2 className="text-3xl font-black leading-tight">{title}</h2>
+        <p className="mt-4 text-base font-bold leading-7 text-[#555]">
+          {message}
+        </p>
+
+        <div className="mt-7 flex justify-end gap-3">
+          {cancelText && (
+            <button
+              type="button"
+              onClick={onClose}
+              className="border-[3px] border-black bg-white px-5 py-3 text-sm font-black shadow-[4px_4px_0_#000] transition hover:-translate-y-0.5"
+            >
+              {cancelText}
+            </button>
           )}
+          <button
+            type="button"
+            onClick={onConfirm}
+            className={`border-[3px] border-black px-5 py-3 text-sm font-black text-white shadow-[4px_4px_0_#000] transition hover:-translate-y-0.5 ${
+              isDanger ? "bg-[#ff123f]" : "bg-black"
+            }`}
+          >
+            {confirmText}
+          </button>
         </div>
       </div>
-    </>
-
+    </div>
   );
 }

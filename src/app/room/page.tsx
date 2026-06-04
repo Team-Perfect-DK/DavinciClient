@@ -10,11 +10,11 @@ export default function RoomPage() {
     const sessionId = localStorage.getItem("sessionId");
 
     if (sessionId) {
-      router.push("/lobby");
+      router.replace("/lobby");
     } else {
-      router.push("/login");
+      router.replace("/");
     }
-  }, []);
+  }, [router]);
 
   return <div>Room Page</div>;
 }
