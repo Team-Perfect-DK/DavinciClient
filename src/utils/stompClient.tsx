@@ -3,33 +3,48 @@ import SockJS from "sockjs-client";
 
 let client: CompatClient | null = null;
 
-// 1. 소켓 연결 및 구독
+interface GameSocketOptions {
+  onConnect?: () => void;
+  onDisconnect?: () => void;
+  onError?: (error: unknown) => void;
+}
+
 export const connectGameSocket = (
   roomCode: string,
-  onMessage: (msg: any) => void
+  onMessage: (msg: any) => void,
+  options: GameSocketOptions = {}
 ): CompatClient => {
-  if (client && client.connected) {
-    client.disconnect(() => {
-      console.log("이전 소켓 연결 해제");
-    });
+  if (client) {
+    if (client.connected) {
+      client.disconnect(() => {
+        options.onDisconnect?.();
+      });
+    }
+    client = null;
   }
 
   const socket = new SockJS(`${process.env.NEXT_PUBLIC_WS_URL}`);
   client = Stomp.over(socket);
   client.debug = () => {};
 
-  client.connect({}, () => {
-    client!.subscribe(
-      `/topic/rooms/${roomCode}`,
-      msg => onMessage(JSON.parse(msg.body)),
-      { id: `${roomCode}-rooms` }
-    );
-  });
+  client.connect(
+    {},
+    () => {
+      client?.subscribe(
+        `/topic/rooms/${roomCode}`,
+        (msg) => onMessage(JSON.parse(msg.body)),
+        { id: `${roomCode}-rooms` }
+      );
+      options.onConnect?.();
+    },
+    (error: unknown) => {
+      options.onError?.(error);
+    }
+  );
 
   return client;
 };
 
-// 2. 소켓 연결 해제
 export const disconnectSocket = () => {
   if (client && client.connected) {
     client.disconnect(() => {
@@ -39,50 +54,54 @@ export const disconnectSocket = () => {
   client = null;
 };
 
-// 3. 방 참가 메시지
+export const sendSocketMessage = (
+  targetClient: CompatClient | null,
+  destination: string,
+  payload: unknown
+): boolean => {
+  if (!targetClient || !targetClient.connected) return false;
+  targetClient.send(destination, {}, JSON.stringify(payload));
+  return true;
+};
+
 export const sendJoinMessage = (
-  client: CompatClient,
+  targetClient: CompatClient,
   roomCode: string,
   userId: string,
   nickname: string
-) => {
-  client.send(
-    "/app/rooms/join",
-    {},
-    JSON.stringify({ roomCode, userId, nickname })
-  );
+): boolean => {
+  return sendSocketMessage(targetClient, "/app/rooms/join", {
+    roomCode,
+    userId,
+    nickname,
+  });
 };
 
-// 4. 게임 시작 메시지
 export const sendStartMessage = (
-  client: CompatClient,
+  targetClient: CompatClient,
   roomCode: string
-) => {
-  client.send("/app/rooms/start", {}, JSON.stringify({ roomCode }));
+): boolean => {
+  return sendSocketMessage(targetClient, "/app/rooms/start", { roomCode });
 };
 
-// 5. 턴 넘기기 메시지 추가
 export const sendPassTurnMessage = (
-  client: CompatClient,
+  targetClient: CompatClient,
   payload: {
     roomCode: string;
     userId: string;
   }
-): void => {
-  if (!client.connected) return;
-  client.send("/app/rooms/turn/pass", {}, JSON.stringify(payload));
+): boolean => {
+  return sendSocketMessage(targetClient, "/app/rooms/turn/pass", payload);
 };
 
-// 6. 카드 추리(액션) 메시지
 export const sendGuessMessage = (
-  client: CompatClient,
+  targetClient: CompatClient,
   payload: {
     roomCode: string;
     userId: string;
     targetCardId: number;
     guessedNumber: number;
   }
-): void => {
-  if (!client.connected) return;
-  client.send("/app/rooms/action", {}, JSON.stringify(payload));
+): boolean => {
+  return sendSocketMessage(targetClient, "/app/rooms/action", payload);
 };

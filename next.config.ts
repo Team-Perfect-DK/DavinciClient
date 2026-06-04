@@ -17,6 +17,7 @@ const nextConfig: NextConfig = {
     config.resolve.alias = {
       ...(config.resolve.alias || {}),
       "@": path.resolve(__dirname, "src"),
+      "supports-color": false,
     };
     return config;
   },
