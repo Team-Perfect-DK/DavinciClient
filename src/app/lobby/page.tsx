@@ -2,10 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { fetchWaitingRooms, createRoom } from "@/app/api/room";
 import { Client } from "@stomp/stompjs";
 import SockJS from "sockjs-client";
-import GlobalClientHandler from '@/components/GlobalClientHandler';
+import { createRoom, fetchWaitingRooms } from "@/app/api/room";
+import GlobalClientHandler from "@/components/GlobalClientHandler";
 
 interface Room {
   id: string;
@@ -18,26 +18,26 @@ interface Room {
 
 export default function Lobby() {
   const [rooms, setRooms] = useState<Room[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string>("");
-  const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
-  const [roomTitle, setRoomTitle] = useState<string>("");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [roomTitle, setRoomTitle] = useState("");
   const [stompClient, setStompClient] = useState<Client | null>(null);
-
   const router = useRouter();
 
   useEffect(() => {
     async function loadRooms() {
       try {
         const data = await fetchWaitingRooms();
-        console.log(data)
         setRooms(data);
-      } catch (err) {
-        setError("방 정보를 불러올 수 없습니다.");
+        setError("");
+      } catch {
+        setError("방 목록을 불러오지 못했습니다.");
       } finally {
         setLoading(false);
       }
     }
+
     loadRooms();
 
     const socket = new SockJS(`${process.env.NEXT_PUBLIC_WS_URL}`);
@@ -45,16 +45,18 @@ export default function Lobby() {
       webSocketFactory: () => socket,
       reconnectDelay: 5000,
       onConnect: () => {
-        client.subscribe(`/topic/rooms/update`, (m) => {
-          const body = JSON.parse(m.body);
-          console.log(body)
-          if (body.action === "ROOM_LIST_UPDATED" || body.action === "ROOM_LIST_CHANGED") {
+        client.subscribe("/topic/rooms/update", (message) => {
+          const body = JSON.parse(message.body);
+          if (
+            body.action === "ROOM_LIST_UPDATED" ||
+            body.action === "ROOM_LIST_CHANGED"
+          ) {
             loadRooms();
           }
-
         });
       },
     });
+
     client.activate();
     setStompClient(client);
 
@@ -64,146 +66,218 @@ export default function Lobby() {
   }, []);
 
   const handleCreateRoom = async () => {
-    if (!roomTitle.trim()) return;
+    const title = roomTitle.trim();
+    if (!title) {
+      setError("방 이름을 입력해주세요.");
+      return;
+    }
+
     try {
-      const newRoom = await createRoom(roomTitle);
+      const newRoom = await createRoom(title);
       setRooms((prev) => [...prev, newRoom]);
+      setRoomTitle("");
       setIsModalOpen(false);
       router.push(`/room/${newRoom.roomCode}`);
-    } catch (err) {
+    } catch {
       setError("방 생성에 실패했습니다.");
     }
   };
 
+  const handleEnterRoom = (room: Room) => {
+    const userId = localStorage.getItem("sessionId");
+    if (!userId) {
+      router.push("/");
+      return;
+    }
+
+    const isFull = room.status === "WAITING" && !!room.guestNickname;
+    const isPlaying = room.status === "PLAYING";
+    if (isFull || isPlaying) return;
+
+    if (stompClient?.connected) {
+      stompClient.publish({
+        destination: "/app/rooms/join",
+        body: JSON.stringify({
+          roomCode: room.roomCode,
+          userId,
+        }),
+      });
+    }
+
+    router.push(`/room/${room.roomCode}`);
+  };
+
+  const waitingCount = rooms.filter(
+    (room) => room.status === "WAITING" && !room.guestNickname
+  ).length;
+
   return (
-    
-    <div className="min-h-screen w-full flex flex-col items-center justify-center bg-gradient-to-r from-[#0B0400] to-[#462512] relative pt-12">
+    <main className="min-h-screen bg-[#f4f4f1] px-4 py-4 font-Arita text-[#101014]">
       <GlobalClientHandler />
-      {/* 프레임 이미지 */}
-      <img
-        src="/img/goldframe.svg"
-        alt="gold frame"
-        className="absolute w-[95%] max-w-7xl h-auto pointer-events-none z-0"
-      />
-
-      {/* 상단 제목 + 버튼 */}
-      <div className="flex justify-between items-center w-[85%] max-w-6xl z-10 mb-6">
-        <div className="text-4xl font-noto text-[#EDAE51] drop-shadow-[4px_4px_4px_rgba(0,0,0,0.3)]">
-          ROOM LIST
-        </div>
-        <button
-          className="w-52 text-2xl font-Arita border border-[#AF8039] text-[#AF8039] px-4 py-2 rounded bg-[#0C0601] hover:bg-[#EDAE51] hover:text-black transition-all"
-          onClick={() => setIsModalOpen(true)}
-        >
-          방 만들기
-        </button>
-      </div>
-
-      {/* 방 목록 */}
-      <div className="w-[85%] max-w-6xl h-[400px] bg-[#111111] border border-[#AF8039] rounded-md overflow-y-scroll px-6 py-4 z-10">
-        {rooms.length > 0 ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {rooms.map((room, idx) => {
-              const isFull = room.status === "WAITING" && !!room.guestNickname;
-              const isPlaying = room.status === "PLAYING";
-
-              return (
-                <div
-                  key={room.id}
-                  className="border border-[#EDAE51] bg-black p-6 rounded-md"
-                >
-                  <p className="text-white text-sm mb-1">{idx + 1}</p>
-                  <h3 className="text-white text-lg font-semibold mb-2">
-                    {room.title}
-                  </h3>
-                  <div className="flex justify-between items-center">
-                    <p
-                      className={`text-sm font-bold ${isPlaying
-                          ? "text-red-600"
-                          : isFull
-                            ? "text-yellow-400"
-                            : "text-green-400"
-                        }`}
-                    >
-                      {isPlaying
-                        ? "게임중"
-                        : isFull
-                          ? "인원 꽉참"
-                          : "대기중"}
-                    </p>
-                    <button
-                      className={`px-4 py-1 border border-[#EDAE51] rounded transition
-                        ${isFull || isPlaying
-                          ? "bg-gray-600 text-gray-300 cursor-not-allowed"
-                          : "text-white hover:bg-[#EDAE51] hover:text-black"
-                        }`}
-                      disabled={isFull || isPlaying}
-                      onClick={() => {
-                        const userId = localStorage.getItem("sessionId");
-                        if (!userId) {
-                          alert("유저 정보가 없습니다.");
-                          router.push("/");
-                          return;
-                        }
-
-                        if (!isFull && !isPlaying && stompClient && stompClient.connected) {
-                          stompClient.publish({
-                            destination: "/app/rooms/join",
-                            body: JSON.stringify({
-                              roomCode: room.roomCode,
-                              userId: userId,
-                            }),
-                          });
-
-                          router.push(`/room/${room.roomCode}`);
-                        }
-                      }}
-                    >
-                      입장하기
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          <div className="w-full h-full flex items-center justify-center">
-            <p className="font-Arita text-white text-2xl">
-              현재 대기중인 방이 없습니다.
+      <section className="mx-auto flex min-h-[calc(100vh-32px)] w-full max-w-[1320px] flex-col border-[3px] border-black bg-white shadow-[12px_12px_0_#000]">
+        <header className="flex flex-col gap-5 border-b-[3px] border-black px-6 py-6 sm:px-9 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <p className="mb-2 text-sm font-black uppercase tracking-[0.2em] text-[#11936e]">
+              Lobby
+            </p>
+            <h1 className="text-5xl font-black leading-none sm:text-6xl">
+              방 목록
+            </h1>
+            <p className="mt-4 text-base font-black text-[#5b5b63]">
+              입장 가능한 방 {waitingCount}개
             </p>
           </div>
-        )}
-      </div>
 
-      {/* 방 생성 모달 */}
+          <button
+            onClick={() => setIsModalOpen(true)}
+            className="w-full border-[3px] border-black bg-black px-6 py-4 text-lg font-black text-white shadow-[6px_6px_0_#11936e] transition hover:-translate-y-0.5 hover:shadow-[8px_8px_0_#11936e] sm:w-auto"
+          >
+            방 만들기
+          </button>
+        </header>
+
+        <section className="flex flex-1 flex-col gap-5 px-6 py-6 sm:px-9">
+          {error && (
+            <div className="border-l-[4px] border-[#ff123f] bg-[#fff5f7] px-4 py-3 text-sm font-black text-[#ff123f]">
+              {error}
+            </div>
+          )}
+
+          {loading ? (
+            <div className="flex flex-1 items-center justify-center text-2xl font-black text-[#777]">
+              방 목록을 불러오는 중
+            </div>
+          ) : rooms.length > 0 ? (
+            <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+              {rooms.map((room, index) => {
+                const isFull = room.status === "WAITING" && !!room.guestNickname;
+                const isPlaying = room.status === "PLAYING";
+                const canEnter = !isFull && !isPlaying;
+
+                return (
+                  <article
+                    key={room.id}
+                    className="border-[3px] border-black bg-white p-5 shadow-[7px_7px_0_#000]"
+                  >
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <p className="text-xs font-black uppercase tracking-[0.2em] text-[#777]">
+                          Room {String(index + 1).padStart(2, "0")}
+                        </p>
+                        <h2 className="mt-2 text-2xl font-black leading-tight">
+                          {room.title}
+                        </h2>
+                        <p className="mt-2 text-sm font-black text-[#777]">
+                          방장 {room.hostNickname}
+                        </p>
+                      </div>
+                      <RoomStatusBadge isFull={isFull} isPlaying={isPlaying} />
+                    </div>
+
+                    <div className="mt-5 grid grid-cols-2 gap-3">
+                      <PlayerSlot label="Host" nickname={room.hostNickname} />
+                      <PlayerSlot
+                        label="Guest"
+                        nickname={room.guestNickname ?? "대기 중"}
+                        empty={!room.guestNickname}
+                      />
+                    </div>
+
+                    <button
+                      disabled={!canEnter}
+                      onClick={() => handleEnterRoom(room)}
+                      className="mt-5 w-full border-[3px] border-black bg-black px-5 py-3 text-sm font-black text-white shadow-[5px_5px_0_#11936e] transition enabled:hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:bg-[#b7b7b7] disabled:text-white disabled:shadow-none"
+                    >
+                      {isPlaying ? "게임 중" : isFull ? "인원 가득" : "입장하기"}
+                    </button>
+                  </article>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="flex flex-1 flex-col items-center justify-center gap-4 py-20 text-center">
+              <p className="text-3xl font-black">대기 중인 방이 없습니다</p>
+              <p className="max-w-md text-base font-bold text-[#666]">
+                새 방을 만들고 상대를 기다려보세요.
+              </p>
+            </div>
+          )}
+        </section>
+      </section>
+
       {isModalOpen && (
-        <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50 z-20">
-          <div className="bg-[#111111] border border-[#EDAE51] text-white p-6 rounded-lg shadow-lg w-96">
-            <h2 className="text-xl font-bold mb-4">방 만들기</h2>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 px-4">
+          <div className="w-full max-w-md border-[3px] border-black bg-white p-6 shadow-[10px_10px_0_#000]">
+            <p className="mb-3 text-xs font-black uppercase tracking-[0.24em] text-[#11936e]">
+              New Room
+            </p>
+            <h2 className="text-3xl font-black">방 만들기</h2>
             <input
               type="text"
-              className="border border-[#EDAE51] bg-transparent text-white p-2 w-full mb-4"
-              placeholder="방 제목 입력"
+              className="mt-6 h-14 w-full border-[3px] border-black bg-white px-4 text-lg font-black outline-none shadow-[5px_5px_0_#000]"
+              placeholder="방 이름 입력"
               value={roomTitle}
-              onChange={(e) => setRoomTitle(e.target.value)}
+              maxLength={18}
+              onChange={(event) => setRoomTitle(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") handleCreateRoom();
+              }}
             />
-            <div className="flex justify-end gap-2">
+            <div className="mt-7 flex justify-end gap-3">
               <button
-                className="px-4 py-2 border border-[#777] text-[#aaa] hover:bg-[#333]"
+                className="border-[3px] border-black bg-white px-5 py-3 text-sm font-black shadow-[4px_4px_0_#000]"
                 onClick={() => setIsModalOpen(false)}
               >
                 취소
               </button>
               <button
-                className="px-4 py-2 border border-[#EDAE51] text-[#EDAE51] hover:bg-[#EDAE51] hover:text-black"
+                className="border-[3px] border-black bg-black px-5 py-3 text-sm font-black text-white shadow-[4px_4px_0_#11936e]"
                 onClick={handleCreateRoom}
               >
-                방 생성
+                생성
               </button>
             </div>
           </div>
         </div>
       )}
+    </main>
+  );
+}
+
+function RoomStatusBadge({
+  isFull,
+  isPlaying,
+}: {
+  isFull: boolean;
+  isPlaying: boolean;
+}) {
+  const label = isPlaying ? "게임 중" : isFull ? "인원 가득" : "대기 중";
+  const color = isPlaying ? "bg-[#ff123f]" : isFull ? "bg-[#f5c542]" : "bg-[#20c997]";
+
+  return (
+    <span className={`border-[3px] border-black px-3 py-2 text-xs font-black ${color}`}>
+      {label}
+    </span>
+  );
+}
+
+function PlayerSlot({
+  label,
+  nickname,
+  empty = false,
+}: {
+  label: string;
+  nickname: string;
+  empty?: boolean;
+}) {
+  return (
+    <div className="border-[3px] border-black px-4 py-3">
+      <p className="text-xs font-black uppercase tracking-[0.16em] text-[#777]">
+        {label}
+      </p>
+      <p className={`mt-1 text-lg font-black ${empty ? "text-[#999]" : "text-[#101014]"}`}>
+        {nickname}
+      </p>
     </div>
   );
 }
