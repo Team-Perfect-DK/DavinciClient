@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Client } from "@stomp/stompjs";
 import SockJS from "sockjs-client";
 import { createRoom, fetchWaitingRooms } from "@/app/api/room";
+import { validateSession } from "@/app/api/user";
 import GlobalClientHandler from "@/components/GlobalClientHandler";
 
 interface Room {
@@ -26,44 +27,64 @@ export default function Lobby() {
   const router = useRouter();
 
   useEffect(() => {
+    let client: Client | null = null;
+    let cancelled = false;
+
     async function loadRooms() {
       try {
         const data = await fetchWaitingRooms();
+        if (cancelled) return;
         setRooms(data);
         setError("");
       } catch {
+        if (cancelled) return;
         setError("방 목록을 불러오지 못했습니다.");
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     }
 
-    loadRooms();
+    async function initializeLobby() {
+      const sessionId = localStorage.getItem("sessionId");
+      if (!sessionId || !(await validateSession(sessionId))) {
+        localStorage.removeItem("sessionId");
+        localStorage.removeItem("nickname");
+        router.replace("/");
+        return;
+      }
 
-    const socket = new SockJS(`${process.env.NEXT_PUBLIC_WS_URL}`);
-    const client = new Client({
-      webSocketFactory: () => socket,
-      reconnectDelay: 5000,
-      onConnect: () => {
-        client.subscribe("/topic/rooms/update", (message) => {
-          const body = JSON.parse(message.body);
-          if (
-            body.action === "ROOM_LIST_UPDATED" ||
-            body.action === "ROOM_LIST_CHANGED"
-          ) {
-            loadRooms();
-          }
-        });
-      },
+      await loadRooms();
+      if (cancelled) return;
+
+      client = new Client({
+        webSocketFactory: () => new SockJS(`${process.env.NEXT_PUBLIC_WS_URL}`),
+        reconnectDelay: 5000,
+        onConnect: () => {
+          client?.subscribe("/topic/rooms/update", (message) => {
+            const body = JSON.parse(message.body);
+            if (
+              body.action === "ROOM_LIST_UPDATED" ||
+              body.action === "ROOM_LIST_CHANGED"
+            ) {
+              void loadRooms();
+            }
+          });
+        },
+      });
+
+      client.activate();
+      setStompClient(client);
+    }
+
+    void initializeLobby().catch(() => {
+      if (!cancelled) setError("서버 연결에 실패했습니다.");
     });
 
-    client.activate();
-    setStompClient(client);
-
     return () => {
-      client.deactivate();
+      cancelled = true;
+      void client?.deactivate();
     };
-  }, []);
+  }, [router]);
 
   const handleCreateRoom = async () => {
     const title = roomTitle.trim();

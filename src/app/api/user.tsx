@@ -16,5 +16,7 @@ export async function validateSession(sessionId: string): Promise<boolean> {
     method: "GET",
     cache: "no-store",
   });
-  return res.ok;
+  if (!res.ok) throw new Error("세션 확인에 실패했습니다.");
+  const data = await res.json();
+  return data.valid === true;
 }
