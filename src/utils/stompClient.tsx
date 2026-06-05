@@ -23,9 +23,12 @@ export const connectGameSocket = (
     client = null;
   }
 
-  const socket = new SockJS(`${process.env.NEXT_PUBLIC_WS_URL}`);
-  client = Stomp.over(socket);
+  client = Stomp.over(
+    () => new SockJS(`${process.env.NEXT_PUBLIC_WS_URL}`)
+  );
   client.debug = () => {};
+  client.reconnect_delay = 2000;
+  client.heartbeat = { incoming: 10000, outgoing: 10000 };
 
   client.connect(
     {},
@@ -39,6 +42,9 @@ export const connectGameSocket = (
     },
     (error: unknown) => {
       options.onError?.(error);
+    },
+    () => {
+      options.onDisconnect?.();
     }
   );
 

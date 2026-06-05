@@ -78,7 +78,16 @@ export default function Lobby() {
       setRoomTitle("");
       setIsModalOpen(false);
       router.push(`/room/${newRoom.roomCode}`);
-    } catch {
+    } catch (createError) {
+      if (
+        createError instanceof Error &&
+        createError.message === "SESSION_EXPIRED"
+      ) {
+        localStorage.removeItem("sessionId");
+        localStorage.removeItem("nickname");
+        router.replace("/");
+        return;
+      }
       setError("방 생성에 실패했습니다.");
     }
   };
@@ -188,7 +197,7 @@ export default function Lobby() {
                       onClick={() => handleEnterRoom(room)}
                       className="mt-5 w-full border-[3px] border-black bg-black px-5 py-3 text-sm font-black text-white shadow-[5px_5px_0_#11936e] transition enabled:hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:bg-[#b7b7b7] disabled:text-white disabled:shadow-none"
                     >
-                      {isPlaying ? "게임 중" : isFull ? "인원 가득" : "입장하기"}
+                      {isPlaying ? "게임 진행 중" : isFull ? "입장 마감" : "입장하기"}
                     </button>
                   </article>
                 );
@@ -251,7 +260,7 @@ function RoomStatusBadge({
   isFull: boolean;
   isPlaying: boolean;
 }) {
-  const label = isPlaying ? "게임 중" : isFull ? "인원 가득" : "대기 중";
+  const label = isPlaying ? "게임 진행 중" : isFull ? "입장 마감" : "대기 중";
   const color = isPlaying ? "bg-[#ff123f]" : isFull ? "bg-[#f5c542]" : "bg-[#20c997]";
 
   return (
