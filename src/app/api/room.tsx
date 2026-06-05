@@ -24,6 +24,10 @@ export async function createRoom(title: String) {
     body: JSON.stringify({ title, hostId }),
   });
 
+  if (res.status === 401) {
+    throw new Error("SESSION_EXPIRED");
+  }
+
   if (!res.ok) {
     throw new Error("방 생성 실패");
   }
@@ -41,6 +45,31 @@ export interface Room {
   hostNickname: string;
   guestId: string | null;
   guestNickname: string | null;
+  currentTurnPlayerId?: string | null;
+  currentTurnHasDrawn?: boolean;
+  currentTurnHasGuessed?: boolean;
+}
+
+export interface GameState {
+  room: Room;
+  cards: Array<{
+    id: number;
+    number: number;
+    color: "WHITE" | "BLACK";
+    status: "OPEN" | "CLOSE";
+    userId: string | null;
+  }>;
+  deckEmpty: boolean;
+}
+
+export async function fetchGameState(roomCode: string): Promise<GameState> {
+  const response = await fetch(`${API_URL}/rooms/${roomCode}/state`, {
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error("게임 상태를 불러오는 데 실패했습니다.");
+  }
+  return response.json();
 }
 
 
@@ -85,5 +114,14 @@ export async function leaveRoom(roomCode: string, userId: string) {
     body: JSON.stringify({ userId }),
   });
   if (!res.ok) throw new Error("방을 나갈 수 없습니다.");
+}
+
+export async function sendRoomHeartbeat(roomCode: string, userId: string) {
+  const res = await fetch(`${API_URL}/rooms/${roomCode}/heartbeat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ userId }),
+  });
+  if (!res.ok) throw new Error("방 연결 상태를 갱신할 수 없습니다.");
 }
 

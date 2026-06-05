@@ -4,9 +4,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { CompatClient } from "@stomp/stompjs";
 import {
+  fetchGameState,
   fetchRoomByRoomCode,
   joinRoomAsGuest,
   leaveRoom,
+  sendRoomHeartbeat,
 } from "@/app/api/room";
 import GameEndOverlay from "@/components/GameEndOverlay";
 import GlobalClientHandler from "@/components/GlobalClientHandler";
@@ -28,6 +30,9 @@ interface Room {
   guestId?: string | null;
   guestNickname?: string | null;
   winnerNickname?: string;
+  currentTurnPlayerId?: string | null;
+  currentTurnHasDrawn?: boolean;
+  currentTurnHasGuessed?: boolean;
 }
 
 interface GameCard {
@@ -99,6 +104,7 @@ export default function RoomPage() {
   );
   const [logs, setLogs] = useState<GameLog[]>([]);
   const [socketReady, setSocketReady] = useState(false);
+  const [hasConnectedOnce, setHasConnectedOnce] = useState(false);
   const [isLeavingRoom, setIsLeavingRoom] = useState(false);
   const [dialog, setDialog] = useState<DialogState | null>(null);
 
@@ -107,6 +113,7 @@ export default function RoomPage() {
   const prevTurnUserIdRef = useRef<string | null>(null);
   const isLeavingRoomRef = useRef(false);
   const logIdRef = useRef(0);
+  const roomRef = useRef<Room | null>(null);
 
   const sortCards = useCallback((cardList: GameCard[]) => {
     return [...cardList].sort((a, b) => {
@@ -134,13 +141,39 @@ export default function RoomPage() {
 
   const getNicknameById = useCallback(
     (id?: string | null) => {
-      if (!room || !id) return "";
-      if (id === room.hostId) return room.hostNickname;
-      if (id === room.guestId) return room.guestNickname ?? "";
-      return "";
+      const latestRoom = roomRef.current;
+      if (!latestRoom || !id) return "상대";
+      if (id === latestRoom.hostId) return latestRoom.hostNickname;
+      if (id === latestRoom.guestId) return latestRoom.guestNickname ?? "상대";
+      return "상대";
     },
-    [room]
+    []
   );
+
+  const syncGameState = useCallback(async () => {
+    if (!roomCode || !userId) return;
+
+    const state = await fetchGameState(roomCode);
+    const allCards = state.cards || [];
+    const my = allCards.filter((card) => card.userId === userId);
+    const opponent = allCards.filter(
+      (card) => card.userId && card.userId !== userId
+    );
+
+    setRoom(state.room as Room);
+    setCards(allCards);
+    setMyCards(sortCards(my));
+    setOpponentCards(sortCards(opponent));
+    setCurrentTurn(state.room.currentTurnPlayerId ?? null);
+    setHasDrawn(!!state.room.currentTurnHasDrawn);
+    setHasGuessedOnce(!!state.room.currentTurnHasGuessed);
+    setDeckEmpty(!!state.deckEmpty);
+    setFlippedCards(
+      allCards
+        .filter((card) => card.status === "OPEN")
+        .map((card) => card.id)
+    );
+  }, [roomCode, sortCards, userId]);
 
   const myNickname = useMemo(() => {
     if (!room || !userId) return "나";
@@ -175,6 +208,10 @@ export default function RoomPage() {
   useEffect(() => {
     prevTurnUserIdRef.current = currentTurn;
   }, [currentTurn]);
+
+  useEffect(() => {
+    roomRef.current = room;
+  }, [room]);
 
   useEffect(() => {
     if (!roomCode || !userId || stompClientRef.current) return;
@@ -312,7 +349,13 @@ export default function RoomPage() {
           setHasDrawn(false);
           setGuessResult(null);
           setHasGuessedOnce(false);
-          addLog(`${getNicknameById(message.payload.nextTurnUserId)}님의 차례입니다.`, "accent");
+          addLog(
+            `${
+              message.payload.nextTurnUserNickname ??
+              getNicknameById(message.payload.nextTurnUserId)
+            }님의 차례입니다.`,
+            "accent"
+          );
           break;
 
         case "GAME_ENDED":
@@ -404,7 +447,12 @@ export default function RoomPage() {
     const client = connectGameSocket(roomCode, handleMessage, {
       onConnect: () => {
         setSocketReady(true);
+        setHasConnectedOnce(true);
         addLog("서버와 연결되었습니다.", "success");
+        void syncGameState().catch((syncError) => {
+          console.error("Failed to sync game state:", syncError);
+          addLog("게임 상태를 다시 불러오지 못했습니다.", "danger");
+        });
       },
       onDisconnect: () => {
         setSocketReady(false);
@@ -449,8 +497,60 @@ export default function RoomPage() {
     router,
     showNotice,
     sortCards,
+    syncGameState,
     userId,
   ]);
+
+  useEffect(() => {
+    if (!roomCode || !userId) return;
+
+    const restoreConnection = () => {
+      if (document.visibilityState !== "visible" || !navigator.onLine) return;
+
+      void syncGameState().catch((syncError) => {
+        console.error("Failed to restore game state:", syncError);
+      });
+
+      const socket = stompClientRef.current;
+      if (socket?.active) {
+        socket.forceDisconnect();
+      }
+    };
+
+    document.addEventListener("visibilitychange", restoreConnection);
+    window.addEventListener("pageshow", restoreConnection);
+    window.addEventListener("online", restoreConnection);
+
+    return () => {
+      document.removeEventListener("visibilitychange", restoreConnection);
+      window.removeEventListener("pageshow", restoreConnection);
+      window.removeEventListener("online", restoreConnection);
+    };
+  }, [roomCode, syncGameState, userId]);
+
+  useEffect(() => {
+    if (!roomCode || !userId) return;
+
+    const heartbeat = () => {
+      if (document.visibilityState !== "visible" || !navigator.onLine) return;
+      void sendRoomHeartbeat(roomCode, userId).catch((heartbeatError) => {
+        console.error("Failed to send room heartbeat:", heartbeatError);
+      });
+    };
+
+    heartbeat();
+    const intervalId = window.setInterval(heartbeat, 2 * 60 * 60 * 1000);
+    document.addEventListener("visibilitychange", heartbeat);
+    window.addEventListener("pageshow", heartbeat);
+    window.addEventListener("online", heartbeat);
+
+    return () => {
+      window.clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", heartbeat);
+      window.removeEventListener("pageshow", heartbeat);
+      window.removeEventListener("online", heartbeat);
+    };
+  }, [roomCode, userId]);
 
   useEffect(() => {
     if (deckEmpty && isMyTurn && !hasDrawn && room?.status === "PLAYING") {
@@ -595,7 +695,29 @@ export default function RoomPage() {
   return (
     <>
       <GlobalClientHandler />
-      <main className="min-h-screen bg-[#f4f4f1] px-4 py-3 font-Arita text-[#101014]">
+      {!socketReady && !isLeavingRoom && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 px-5 font-Arita backdrop-blur-[2px]"
+          role="status"
+          aria-live="polite"
+          aria-label="서버 연결 중"
+        >
+          <div className="w-full max-w-sm border-[3px] border-black bg-white px-7 py-8 text-center shadow-[10px_10px_0_#11936e]">
+            <div className="mx-auto h-12 w-12 animate-spin border-[5px] border-[#d8d8d8] border-t-[#11936e]" />
+            <p className="mt-6 text-2xl font-black">
+              {hasConnectedOnce
+                ? "연결을 복구하고 있습니다..."
+                : "서버에 연결 중입니다..."}
+            </p>
+            <p className="mt-3 text-sm font-bold leading-6 text-[#666]">
+              연결이 완료되면 게임이 자동으로 이어집니다.
+              <br />
+              잠시만 기다려주세요.
+            </p>
+          </div>
+        </div>
+      )}
+      <main className="min-h-screen overflow-x-hidden bg-[#f4f4f1] px-4 py-3 font-Arita text-[#101014]">
         <section className="mx-auto flex min-h-[calc(100vh-24px)] w-full max-w-[1500px] flex-col border-[3px] border-black bg-white shadow-[10px_10px_0_#000]">
           <header className="flex flex-col gap-4 border-b-[3px] border-black px-6 py-5 sm:px-8 lg:flex-row lg:items-end lg:justify-between">
             <div>
@@ -658,8 +780,8 @@ export default function RoomPage() {
             </div>
           )}
 
-          <div className="grid flex-1 lg:grid-cols-[1fr_390px]">
-            <section className="flex flex-col gap-6 px-6 py-5 sm:px-8">
+          <div className="grid min-w-0 flex-1 lg:grid-cols-[minmax(0,1fr)_390px]">
+            <section className="flex min-w-0 flex-col gap-6 px-6 py-5 sm:px-8">
               <div className="grid gap-4 border-b-[3px] border-black pb-5 sm:grid-cols-2">
                 <PlayerBadge
                   label="상대"
@@ -694,7 +816,7 @@ export default function RoomPage() {
                   </div>
                 </div>
               ) : (
-                <div className="flex flex-col gap-6">
+                <div className="flex min-w-0 flex-col gap-6">
                   <CardRow
                     title={`${opponentNickname}의 타일`}
                     countLabel={`TILE x ${opponentCards.length}`}
@@ -937,14 +1059,14 @@ function CardRow({
   isMyCardGuessed?: (card: GameCard) => boolean;
 }) {
   return (
-    <section>
-      <div className="mb-8 flex items-center justify-between gap-4">
+    <section className="min-w-0 max-w-full">
+      <div className="mb-5 flex items-center justify-between gap-4">
         <h2 className="text-2xl font-black">{title}</h2>
         <span className="border-[3px] border-black bg-white px-4 py-2 text-sm font-black shadow-[4px_4px_0_#000]">
           {countLabel}
         </span>
       </div>
-      <div className="flex min-h-[122px] flex-wrap gap-4">
+      <div className="flex min-h-[150px] w-full min-w-0 max-w-full gap-[clamp(12px,1.5vw,20px)] overflow-x-auto overflow-y-hidden overscroll-x-contain px-1 pb-4 pt-7">
         {cards.length > 0 ? (
           cards.map((card) => {
             const isFlipped = flippedCards.includes(card.id) || card.status === "OPEN";
@@ -976,7 +1098,7 @@ function CardRow({
                           : "bg-white text-black"
                       }`}
                     >
-                      <span className="text-5xl leading-none">?</span>
+                      <span className="text-[clamp(2.5rem,4vw,3rem)] leading-none">?</span>
                     </div>
                     <div
                       className={`card-face card-back rounded-none border-[5px] border-[#ff123f] text-[#ff123f] shadow-[0_10px_18px_rgba(255,18,63,0.35)] ${
