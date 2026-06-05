@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import { Client } from "@stomp/stompjs";
 import SockJS from "sockjs-client";
 import { createRoom, fetchWaitingRooms } from "@/app/api/room";
-import { validateSession } from "@/app/api/user";
 import GlobalClientHandler from "@/components/GlobalClientHandler";
 
 interface Room {
@@ -21,6 +20,7 @@ export default function Lobby() {
   const [rooms, setRooms] = useState<Room[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [socketError, setSocketError] = useState("");
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [roomTitle, setRoomTitle] = useState("");
   const [stompClient, setStompClient] = useState<Client | null>(null);
@@ -46,9 +46,7 @@ export default function Lobby() {
 
     async function initializeLobby() {
       const sessionId = localStorage.getItem("sessionId");
-      if (!sessionId || !(await validateSession(sessionId))) {
-        localStorage.removeItem("sessionId");
-        localStorage.removeItem("nickname");
+      if (!sessionId) {
         router.replace("/");
         return;
       }
@@ -60,6 +58,7 @@ export default function Lobby() {
         webSocketFactory: () => new SockJS(`${process.env.NEXT_PUBLIC_WS_URL}`),
         reconnectDelay: 5000,
         onConnect: () => {
+          setSocketError("");
           client?.subscribe("/topic/rooms/update", (message) => {
             const body = JSON.parse(message.body);
             if (
@@ -70,6 +69,11 @@ export default function Lobby() {
             }
           });
         },
+        onWebSocketError: () => {
+          if (!cancelled) {
+            setSocketError("실시간 연결이 끊겼습니다. 자동으로 다시 연결하고 있습니다.");
+          }
+        },
       });
 
       client.activate();
@@ -77,7 +81,10 @@ export default function Lobby() {
     }
 
     void initializeLobby().catch(() => {
-      if (!cancelled) setError("서버 연결에 실패했습니다.");
+      if (!cancelled) {
+        setLoading(false);
+        setError("로비를 불러오지 못했습니다.");
+      }
     });
 
     return () => {
@@ -170,6 +177,11 @@ export default function Lobby() {
           {error && (
             <div className="border-l-[4px] border-[#ff123f] bg-[#fff5f7] px-4 py-3 text-sm font-black text-[#ff123f]">
               {error}
+            </div>
+          )}
+          {socketError && (
+            <div className="border-l-[4px] border-[#f5c542] bg-[#fffbed] px-4 py-3 text-sm font-black text-[#705b00]">
+              {socketError}
             </div>
           )}
 
