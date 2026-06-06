@@ -202,16 +202,12 @@ export default function RoomPage() {
   }, [room, userId]);
 
   const roomPlayers = useMemo(() => getRoomPlayers(room), [room]);
-  const opponentPlayers = useMemo(
-    () => roomPlayers.filter((player) => player.id !== userId),
-    [roomPlayers, userId]
-  );
-  const opponentCardGroups = useMemo(() => {
-    return opponentPlayers.map((player) => ({
+  const playerCardGroups = useMemo(() => {
+    return roomPlayers.map((player) => ({
       player,
-      cards: sortCards(opponentCards.filter((card) => card.userId === player.id)),
+      cards: sortCards(cards.filter((card) => card.userId === player.id)),
     }));
-  }, [opponentCards, opponentPlayers, sortCards]);
+  }, [cards, roomPlayers, sortCards]);
   const guessTargetNickname = useMemo(() => {
     if (!guessModalCard) return "상대";
     return getNicknameById(guessModalCard.userId);
@@ -851,31 +847,37 @@ export default function RoomPage() {
                   </div>
                 </div>
               ) : (
-                <div className="flex min-w-0 flex-col gap-6">
-                  {opponentCardGroups.map(({ player, cards: playerCards }) => (
-                    <CardRow
-                      key={player.id}
-                      title={`${player.nickname}의 타일`}
-                      countLabel={`TILE x ${playerCards.length}`}
-                      cards={playerCards}
-                      flippedCards={flippedCards}
-                      canGuess={canGuess}
-                      onCardClick={openGuessModal}
-                      isOpponent
-                    />
-                  ))}
-
-                  <div className="h-[3px] w-full bg-black" />
-
-                  <CardRow
-                    title={`${myNickname}의 타일`}
-                    countLabel={`보유: ${myCards.length}`}
-                    cards={myCards}
-                    flippedCards={flippedCards}
-                    canGuess={false}
-                    onCardClick={() => undefined}
-                    isMyCardGuessed={wasMyCardGuessed}
-                  />
+                <div
+                  className="grid min-w-0 gap-5"
+                  style={{
+                    gridTemplateRows: `repeat(${Math.min(playerCardGroups.length, 2)}, minmax(0, auto))`,
+                    gridAutoFlow: "column",
+                    gridAutoColumns: "minmax(0, 1fr)",
+                  }}
+                >
+                  {playerCardGroups.map(({ player, cards: playerCards }) => {
+                    const isMe = player.id === userId;
+                    return (
+                      <div
+                        key={player.id}
+                        className={`min-w-0 border-[3px] border-black p-5 shadow-[6px_6px_0_#000] ${
+                          isMe ? "bg-[#f1fff9]" : "bg-white"
+                        }`}
+                      >
+                        <CardRow
+                          title={`${player.nickname}${isMe ? " (나)" : ""}의 타일`}
+                          countLabel={`${isMe ? "보유" : "TILE"} x ${playerCards.length}`}
+                          cards={playerCards}
+                          flippedCards={flippedCards}
+                          canGuess={!isMe && canGuess}
+                          onCardClick={isMe ? () => undefined : openGuessModal}
+                          isOpponent={!isMe}
+                          isMyCardGuessed={isMe ? wasMyCardGuessed : undefined}
+                          compact={playerCardGroups.length > 2}
+                        />
+                      </div>
+                    );
+                  })}
                 </div>
               )}
 
@@ -1094,6 +1096,7 @@ function CardRow({
   onCardClick,
   isOpponent = false,
   isMyCardGuessed,
+  compact = false,
 }: {
   title: string;
   countLabel: string;
@@ -1103,16 +1106,21 @@ function CardRow({
   onCardClick: (card: GameCard) => void;
   isOpponent?: boolean;
   isMyCardGuessed?: (card: GameCard) => boolean;
+  compact?: boolean;
 }) {
   return (
     <section className="min-w-0 max-w-full">
-      <div className="mb-5 flex items-center justify-between gap-4">
-        <h2 className="text-2xl font-black">{title}</h2>
+      <div className={`flex items-center justify-between gap-4 ${compact ? "mb-3" : "mb-5"}`}>
+        <h2 className={`${compact ? "text-xl" : "text-2xl"} font-black`}>{title}</h2>
         <span className="border-[3px] border-black bg-white px-4 py-2 text-sm font-black shadow-[4px_4px_0_#000]">
           {countLabel}
         </span>
       </div>
-      <div className="flex min-h-[150px] w-full min-w-0 max-w-full gap-[clamp(12px,1.5vw,20px)] overflow-x-auto overflow-y-hidden overscroll-x-contain px-1 pb-4 pt-7">
+      <div className={`flex w-full min-w-0 max-w-full overflow-x-auto overflow-y-hidden overscroll-x-contain px-1 pb-4 ${
+        compact
+          ? "min-h-[125px] gap-3 pt-5 [&_.card-wrapper]:h-[105px] [&_.card-wrapper]:w-[70px]"
+          : "min-h-[150px] gap-[clamp(12px,1.5vw,20px)] pt-7"
+      }`}>
         {cards.length > 0 ? (
           cards.map((card) => {
             const isFlipped = flippedCards.includes(card.id) || card.status === "OPEN";
