@@ -40,14 +40,24 @@ export interface Room {
   id: string;
   title: string; 
   roomCode: string;
-  status: "WAITING" | "PLAYING"; 
+  status: "WAITING" | "PLAYING" | "ENDED";
   hostId: string;
   hostNickname: string;
   guestId: string | null;
   guestNickname: string | null;
+  players?: RoomPlayer[];
+  playerCount?: number;
+  full?: boolean;
   currentTurnPlayerId?: string | null;
   currentTurnHasDrawn?: boolean;
   currentTurnHasGuessed?: boolean;
+}
+
+export interface RoomPlayer {
+  id: string;
+  nickname: string;
+  seat: number;
+  host: boolean;
 }
 
 export interface GameState {

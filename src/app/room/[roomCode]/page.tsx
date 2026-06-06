@@ -29,10 +29,20 @@ interface Room {
   hostNickname: string;
   guestId?: string | null;
   guestNickname?: string | null;
+  players?: RoomPlayer[];
+  playerCount?: number;
+  full?: boolean;
   winnerNickname?: string;
   currentTurnPlayerId?: string | null;
   currentTurnHasDrawn?: boolean;
   currentTurnHasGuessed?: boolean;
+}
+
+interface RoomPlayer {
+  id: string;
+  nickname: string;
+  seat: number;
+  host: boolean;
 }
 
 interface GameCard {
@@ -67,6 +77,18 @@ interface DialogState {
 
 const TOTAL_DECK_SIZE = 24;
 const GUESS_NUMBERS = Array.from({ length: 12 }, (_, index) => index);
+const PLAYER_COLORS = ["green", "red", "blue", "yellow"] as const;
+
+const getRoomPlayers = (room: Room | null): RoomPlayer[] => {
+  if (!room) return [];
+  if (room.players?.length) return room.players;
+  return [
+    { id: room.hostId, nickname: room.hostNickname, seat: 1, host: true },
+    ...(room.guestId
+      ? [{ id: room.guestId, nickname: room.guestNickname ?? "Player 2", seat: 2, host: false }]
+      : []),
+  ];
+};
 
 export default function RoomPage() {
   const router = useRouter();
@@ -143,9 +165,7 @@ export default function RoomPage() {
     (id?: string | null) => {
       const latestRoom = roomRef.current;
       if (!latestRoom || !id) return "상대";
-      if (id === latestRoom.hostId) return latestRoom.hostNickname;
-      if (id === latestRoom.guestId) return latestRoom.guestNickname ?? "상대";
-      return "상대";
+      return getRoomPlayers(latestRoom).find((player) => player.id === id)?.nickname ?? "상대";
     },
     []
   );
@@ -177,17 +197,24 @@ export default function RoomPage() {
 
   const myNickname = useMemo(() => {
     if (!room || !userId) return "나";
-    return userId === room.hostId
-      ? room.hostNickname
-      : room.guestNickname ?? "나";
+    return getRoomPlayers(room).find((player) => player.id === userId)?.nickname ?? "나";
   }, [room, userId]);
 
-  const opponentNickname = useMemo(() => {
-    if (!room || !userId) return "상대";
-    if (userId === room.hostId) return room.guestNickname ?? "대기 중";
-    return room.hostNickname || "상대";
-  }, [room, userId]);
-
+  const roomPlayers = useMemo(() => getRoomPlayers(room), [room]);
+  const opponentPlayers = useMemo(
+    () => roomPlayers.filter((player) => player.id !== userId),
+    [roomPlayers, userId]
+  );
+  const opponentCardGroups = useMemo(() => {
+    return opponentPlayers.map((player) => ({
+      player,
+      cards: sortCards(opponentCards.filter((card) => card.userId === player.id)),
+    }));
+  }, [opponentCards, opponentPlayers, sortCards]);
+  const guessTargetNickname = useMemo(() => {
+    if (!guessModalCard) return "상대";
+    return getNicknameById(guessModalCard.userId);
+  }, [getNicknameById, guessModalCard]);
   const isMyTurn = Boolean(userId && currentTurn && userId === currentTurn);
   const canGuess = isMyTurn && hasDrawn;
   const canPass = isMyTurn && hasDrawn && hasGuessedOnce;
@@ -253,7 +280,7 @@ export default function RoomPage() {
             deckEmpty: nextDeckEmpty,
           } = message.payload;
           const nickname =
-            drawnUserId === userId ? myNickname : opponentNickname;
+            drawnUserId === userId ? myNickname : getNicknameById(drawnUserId);
           setDeckEmpty(!!nextDeckEmpty);
           if (drawnUserId === userId) {
             setMyCards((prev) => sortCards([...prev, card]));
@@ -469,7 +496,12 @@ export default function RoomPage() {
       .then(async (data) => {
         if (!data) throw new Error("방 정보를 찾을 수 없습니다.");
         let finalRoom: Room;
-        if (data.hostId && !data.guestId && data.hostId !== userId) {
+        const existingPlayers = getRoomPlayers(data as Room);
+        if (
+          data.status === "WAITING" &&
+          !existingPlayers.some((player) => player.id === userId) &&
+          existingPlayers.length < 4
+        ) {
           const joined = await joinRoomAsGuest(data.roomCode, userId);
           finalRoom =
             joined.action === "ROOM_UPDATED" ? joined.payload : joined;
@@ -616,11 +648,12 @@ export default function RoomPage() {
 
   const handleStartGame = () => {
     if (!room || !stompClientRef.current) return;
-    if (!room.guestId) {
-      showNotice("아직 시작할 수 없습니다", "상대방이 입장해야 게임을 시작할 수 있습니다.");
+    if (roomPlayers.length < 2) {
+      showNotice("아직 시작할 수 없습니다", "두 명 이상의 플레이어가 입장해야 게임을 시작할 수 있습니다.");
       return;
     }
-    const sent = sendStartMessage(stompClientRef.current, room.roomCode);
+    if (!userId) return;
+    const sent = sendStartMessage(stompClientRef.current, room.roomCode, userId);
     if (!sent) {
       showNotice(
         "서버 연결 대기 중",
@@ -782,26 +815,27 @@ export default function RoomPage() {
 
           <div className="grid min-w-0 flex-1 lg:grid-cols-[minmax(0,1fr)_390px]">
             <section className="flex min-w-0 flex-col gap-6 px-6 py-5 sm:px-8">
-              <div className="grid gap-4 border-b-[3px] border-black pb-5 sm:grid-cols-2">
-                <PlayerBadge
-                  label="상대"
-                  nickname={opponentNickname}
-                  color="red"
-                  isActive={currentTurn !== userId && room.status === "PLAYING"}
-                />
-                <PlayerBadge
-                  label="나"
-                  nickname={myNickname}
-                  color="green"
-                  isActive={isMyTurn}
-                />
+              <div className="grid gap-4 border-b-[3px] border-black pb-5 sm:grid-cols-2 xl:grid-cols-4">
+                {Array.from({ length: 4 }, (_, seatIndex) => {
+                  const player = roomPlayers.find((item) => item.seat === seatIndex + 1);
+                  return (
+                    <PlayerBadge
+                      key={seatIndex}
+                      label={player?.id === userId ? "나" : `Player ${seatIndex + 1}`}
+                      nickname={player?.nickname ?? "Waiting..."}
+                      color={PLAYER_COLORS[seatIndex]}
+                      isActive={Boolean(player && currentTurn === player.id && room.status === "PLAYING")}
+                      empty={!player}
+                    />
+                  );
+                })}
               </div>
 
               {room.status === "WAITING" ? (
                 <div className="flex flex-1 flex-col items-center justify-center gap-5 py-20 text-center">
                   <p className="text-3xl font-black">상대 입장을 기다리는 중</p>
                   <p className="max-w-md text-base font-bold text-[#666]">
-                    두 명이 모두 입장하면 방장이 게임을 시작할 수 있습니다.
+                    두 명 이상 입장하면 방장이 게임을 시작할 수 있습니다. 최대 네 명까지 참여할 수 있습니다.
                   </p>
                   <div className="flex gap-3">
                     {room.hostId === userId && (
@@ -817,15 +851,18 @@ export default function RoomPage() {
                 </div>
               ) : (
                 <div className="flex min-w-0 flex-col gap-6">
-                  <CardRow
-                    title={`${opponentNickname}의 타일`}
-                    countLabel={`TILE x ${opponentCards.length}`}
-                    cards={opponentCards}
-                    flippedCards={flippedCards}
-                    canGuess={canGuess}
-                    onCardClick={openGuessModal}
-                    isOpponent
-                  />
+                  {opponentCardGroups.map(({ player, cards: playerCards }) => (
+                    <CardRow
+                      key={player.id}
+                      title={`${player.nickname}의 타일`}
+                      countLabel={`TILE x ${playerCards.length}`}
+                      cards={playerCards}
+                      flippedCards={flippedCards}
+                      canGuess={canGuess}
+                      onCardClick={openGuessModal}
+                      isOpponent
+                    />
+                  ))}
 
                   <div className="h-[3px] w-full bg-black" />
 
@@ -946,7 +983,7 @@ export default function RoomPage() {
 
         {guessModalCard && (
           <Modal
-            title={`${opponentNickname}의 타일 추측`}
+            title={`${guessTargetNickname}의 타일 추측`}
             onClose={() => {
               setGuessModalCard(null);
               setSelectedGuessNumber(null);
@@ -1016,22 +1053,30 @@ function PlayerBadge({
   nickname,
   color,
   isActive,
+  empty = false,
 }: {
   label: string;
   nickname: string;
-  color: "red" | "green";
+  color: "red" | "green" | "blue" | "yellow";
   isActive: boolean;
+  empty?: boolean;
 }) {
   return (
     <div className="flex items-center gap-3">
       <span
         className={`h-5 w-5 border-[3px] border-black ${
-          color === "green" ? "bg-[#20c997]" : "bg-[#f0263e]"
+          color === "green"
+            ? "bg-[#20c997]"
+            : color === "blue"
+              ? "bg-[#2979ff]"
+              : color === "yellow"
+                ? "bg-[#f5c542]"
+                : "bg-[#f0263e]"
         }`}
       />
       <div>
         <p className="text-xs font-black text-[#777]">{label}</p>
-        <p className={`text-2xl font-black ${isActive ? "text-[#11936e]" : ""}`}>
+        <p className={`text-2xl font-black ${isActive ? "text-[#11936e]" : empty ? "text-[#aaa]" : ""}`}>
           {nickname}
         </p>
       </div>

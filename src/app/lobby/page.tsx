@@ -14,7 +14,20 @@ interface Room {
   status: "WAITING" | "PLAYING";
   hostNickname: string;
   guestNickname?: string | null;
+  players?: Array<{ id: string; nickname: string; seat: number; host: boolean }>;
+  playerCount?: number;
+  full?: boolean;
 }
+
+const getRoomPlayers = (room: Room) =>
+  room.players?.length
+    ? room.players
+    : [
+        { id: "host", nickname: room.hostNickname, seat: 1, host: true },
+        ...(room.guestNickname
+          ? [{ id: "guest", nickname: room.guestNickname, seat: 2, host: false }]
+          : []),
+      ];
 
 export default function Lobby() {
   const [rooms, setRooms] = useState<Room[]>([]);
@@ -127,7 +140,7 @@ export default function Lobby() {
       return;
     }
 
-    const isFull = room.status === "WAITING" && !!room.guestNickname;
+    const isFull = room.status === "WAITING" && (room.full || getRoomPlayers(room).length >= 4);
     const isPlaying = room.status === "PLAYING";
     if (isFull || isPlaying) return;
 
@@ -145,7 +158,7 @@ export default function Lobby() {
   };
 
   const waitingCount = rooms.filter(
-    (room) => room.status === "WAITING" && !room.guestNickname
+    (room) => room.status === "WAITING" && getRoomPlayers(room).length < 4
   ).length;
 
   return (
@@ -192,7 +205,8 @@ export default function Lobby() {
           ) : rooms.length > 0 ? (
             <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
               {rooms.map((room, index) => {
-                const isFull = room.status === "WAITING" && !!room.guestNickname;
+                const players = getRoomPlayers(room);
+                const isFull = room.status === "WAITING" && (room.full || players.length >= 4);
                 const isPlaying = room.status === "PLAYING";
                 const canEnter = !isFull && !isPlaying;
 
@@ -217,12 +231,17 @@ export default function Lobby() {
                     </div>
 
                     <div className="mt-5 grid grid-cols-2 gap-3">
-                      <PlayerSlot label="Host" nickname={room.hostNickname} />
-                      <PlayerSlot
-                        label="Guest"
-                        nickname={room.guestNickname ?? "대기 중"}
-                        empty={!room.guestNickname}
-                      />
+                      {Array.from({ length: 4 }, (_, seatIndex) => {
+                        const player = players.find((item) => item.seat === seatIndex + 1);
+                        return (
+                          <PlayerSlot
+                            key={seatIndex}
+                            label={seatIndex === 0 ? "Host" : `Player ${seatIndex + 1}`}
+                            nickname={player?.nickname ?? "대기 중"}
+                            empty={!player}
+                          />
+                        );
+                      })}
                     </div>
 
                     <button

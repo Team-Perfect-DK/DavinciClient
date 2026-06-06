@@ -85,9 +85,10 @@ export const sendJoinMessage = (
 
 export const sendStartMessage = (
   targetClient: CompatClient,
-  roomCode: string
+  roomCode: string,
+  userId: string
 ): boolean => {
-  return sendSocketMessage(targetClient, "/app/rooms/start", { roomCode });
+  return sendSocketMessage(targetClient, "/app/rooms/start", { roomCode, userId });
 };
 
 export const sendPassTurnMessage = (
