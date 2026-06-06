@@ -6,6 +6,7 @@ import { Client } from "@stomp/stompjs";
 import SockJS from "sockjs-client";
 import { createRoom, fetchWaitingRooms } from "@/app/api/room";
 import GlobalClientHandler from "@/components/GlobalClientHandler";
+import { clearAuthSession, getSessionId } from "@/utils/authSession";
 
 interface Room {
   id: string;
@@ -58,7 +59,7 @@ export default function Lobby() {
     }
 
     async function initializeLobby() {
-      const sessionId = localStorage.getItem("sessionId");
+      const sessionId = getSessionId();
       if (!sessionId) {
         router.replace("/");
         return;
@@ -124,8 +125,7 @@ export default function Lobby() {
         createError instanceof Error &&
         createError.message === "SESSION_EXPIRED"
       ) {
-        localStorage.removeItem("sessionId");
-        localStorage.removeItem("nickname");
+        clearAuthSession();
         router.replace("/");
         return;
       }
@@ -134,7 +134,7 @@ export default function Lobby() {
   };
 
   const handleEnterRoom = (room: Room) => {
-    const userId = localStorage.getItem("sessionId");
+    const userId = getSessionId();
     if (!userId) {
       router.push("/");
       return;

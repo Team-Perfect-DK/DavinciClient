@@ -19,6 +19,7 @@ import {
   sendSocketMessage,
   sendStartMessage,
 } from "@/utils/stompClient";
+import { getSessionId } from "@/utils/authSession";
 
 interface Room {
   id: string;
@@ -224,7 +225,7 @@ export default function RoomPage() {
   );
 
   useEffect(() => {
-    const id = localStorage.getItem("sessionId");
+    const id = getSessionId();
     if (id) {
       setUserId(id);
     } else {

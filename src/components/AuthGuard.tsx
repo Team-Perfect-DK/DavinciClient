@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { validateSession } from "@/app/api/user";
+import { clearAuthSession, getSessionId } from "@/utils/authSession";
 
 const LOGIN_PATH = "/";
 const LOBBY_PATH = "/lobby";
@@ -13,7 +14,7 @@ export default function AuthGuard() {
   const [checking, setChecking] = useState(true);
 
   useEffect(() => {
-    const sessionId = localStorage.getItem("sessionId");
+    const sessionId = getSessionId();
     const isLoginPage = pathname === LOGIN_PATH;
     setChecking(true);
 
@@ -34,8 +35,7 @@ export default function AuthGuard() {
         if (cancelled) return;
 
         if (!isValid) {
-          localStorage.removeItem("sessionId");
-          localStorage.removeItem("nickname");
+          clearAuthSession();
           if (!isLoginPage) router.replace(LOGIN_PATH);
           setChecking(false);
           return;

@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { leaveRoom } from '@/app/api/room';
 import { disconnectSocket } from '@/utils/stompClient';
+import { getSessionId } from '@/utils/authSession';
 
 const GlobalClientHandler = () => {
   const pathname = usePathname();
@@ -13,7 +14,7 @@ const GlobalClientHandler = () => {
     const roomCodeMatch = pathname.match(/^\/room\/(.+)/);
     const isInRoom = Boolean(roomCodeMatch);
     const roomCode = roomCodeMatch?.[1];
-    const userId = typeof window !== 'undefined' ? localStorage.getItem('sessionId') : null;
+    const userId = getSessionId();
 
     if (!isInRoom || !roomCode || !userId) return;
 

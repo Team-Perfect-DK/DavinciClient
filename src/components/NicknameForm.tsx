@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { registerUser } from "@/app/api/user";
 import { useUserStore } from "@/store/userStore";
+import { setAuthSession } from "@/utils/authSession";
 
 const previewTiles = [0, 3, 6, 9, 11, "?"];
 
@@ -57,8 +58,7 @@ export default function NicknameForm() {
     try {
       const data = await registerUser(trimmedNickname);
       setUser(trimmedNickname, data.sessionId);
-      localStorage.setItem("sessionId", data.sessionId);
-      localStorage.setItem("nickname", trimmedNickname);
+      setAuthSession(data.sessionId, trimmedNickname);
       router.push("/lobby");
     } catch {
       setError("이미 사용 중인 닉네임입니다. 다른 이름을 입력해주세요.");

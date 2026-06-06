@@ -1,3 +1,5 @@
+import { getSessionId } from "@/utils/authSession";
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL;
 
 export async function fetchWaitingRooms() {
@@ -15,7 +17,7 @@ export async function fetchWaitingRooms() {
 }
 
 export async function createRoom(title: String) {
-  const hostId = localStorage.getItem("sessionId");
+  const hostId = getSessionId();
   const res = await fetch(`${API_URL}/rooms/create`, {
     method: "POST",
     headers: {
