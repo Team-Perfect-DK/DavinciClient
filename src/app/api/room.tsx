@@ -128,6 +128,15 @@ export async function leaveRoom(roomCode: string, userId: string) {
   if (!res.ok) throw new Error("방을 나갈 수 없습니다.");
 }
 
+export async function deleteRoom(roomCode: string, userId: string) {
+  const res = await fetch(`${API_URL}/rooms/${roomCode}`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ userId }),
+  });
+  if (!res.ok) throw new Error("諛⑹쓣 ??젣?????놁뒿?덈떎.");
+}
+
 export async function sendRoomHeartbeat(roomCode: string, userId: string) {
   const res = await fetch(`${API_URL}/rooms/${roomCode}/heartbeat`, {
     method: "POST",

@@ -67,6 +67,12 @@ interface GameLog {
   tone?: LogTone;
 }
 
+interface Ranking {
+  rank: number;
+  userId: string;
+  nickname: string;
+}
+
 interface DialogState {
   title: string;
   message: string;
@@ -103,6 +109,7 @@ export default function RoomPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [winner, setWinner] = useState<string | null>(null);
+  const [rankings, setRankings] = useState<Ranking[]>([]);
   const [currentTurn, setCurrentTurn] = useState<string | null>(null);
   const [cards, setCards] = useState<GameCard[]>([]);
   const [myCards, setMyCards] = useState<GameCard[]>([]);
@@ -146,6 +153,24 @@ export default function RoomPage() {
       return a.number - b.number;
     });
   }, []);
+
+  const upsertCard = useCallback(
+    (cardList: GameCard[], nextCard: GameCard) => {
+      const mergedCards = new Map<number, GameCard>();
+
+      for (const existingCard of cardList) {
+        mergedCards.set(existingCard.id, existingCard);
+      }
+
+      mergedCards.set(nextCard.id, {
+        ...(mergedCards.get(nextCard.id) ?? nextCard),
+        ...nextCard,
+      });
+
+      return sortCards(Array.from(mergedCards.values()));
+    },
+    [sortCards]
+  );
 
   const addLog = useCallback((message: string, tone: LogTone = "normal") => {
     setLogs((prev) => [
@@ -280,11 +305,11 @@ export default function RoomPage() {
             drawnUserId === userId ? myNickname : getNicknameById(drawnUserId);
           setDeckEmpty(!!nextDeckEmpty);
           if (drawnUserId === userId) {
-            setMyCards((prev) => sortCards([...prev, card]));
+            setMyCards((prev) => upsertCard(prev, card));
           } else {
-            setOpponentCards((prev) => sortCards([...prev, card]));
+            setOpponentCards((prev) => upsertCard(prev, card));
           }
-          setCards((prev) => [...prev, card]);
+          setCards((prev) => upsertCard(prev, card));
           setHasDrawn(true);
           setDrawModalOpen(false);
           setDrawFailMessage(null);
@@ -310,6 +335,7 @@ export default function RoomPage() {
             guessedNumber,
             openedCardOwnerNickname,
             openedCardInfo,
+            eliminatedPlayers,
           } = message.payload;
           setCurrentTurn(nextTurnUserId);
 
@@ -363,6 +389,11 @@ export default function RoomPage() {
               : `실패! 추측한 숫자 ${guessedNumber}가 아니었습니다.`,
             correct ? "success" : "danger"
           );
+          if (Array.isArray(eliminatedPlayers)) {
+            eliminatedPlayers.forEach((player: Ranking) => {
+              addLog(`${player.nickname}님이 탈락했습니다.`, "danger");
+            });
+          }
           setGuessModalCard(null);
           setSelectedGuessNumber(null);
           break;
@@ -384,6 +415,7 @@ export default function RoomPage() {
 
         case "GAME_ENDED":
           setWinner(message.payload.winnerNickname);
+          setRankings(message.payload.rankings ?? []);
           setIsGameEnded(true);
           setDrawModalOpen(false);
           setGuessModalCard(null);
@@ -406,6 +438,7 @@ export default function RoomPage() {
               if (prev <= 1) {
                 clearInterval(countdownRef.current!);
                 setWinner(null);
+                setRankings([]);
                 setIsGameEnded(false);
                 setRoom((prevRoom) =>
                   prevRoom
@@ -451,6 +484,7 @@ export default function RoomPage() {
             prev ? { ...prev, status: "WAITING", winnerNickname: undefined } : prev
           );
           setWinner(null);
+          setRankings([]);
           setCurrentTurn(null);
           setHasDrawn(false);
           setGuessResult(null);
@@ -527,6 +561,7 @@ export default function RoomPage() {
     showNotice,
     sortCards,
     syncGameState,
+    upsertCard,
     userId,
   ]);
 
@@ -797,6 +832,22 @@ export default function RoomPage() {
                 <span className="mt-4 text-3xl font-black text-[#11936e]">
                   승자: {winner}
                 </span>
+                <div className="mt-6 flex w-full min-w-[280px] flex-col gap-2 text-left">
+                  {(rankings.length > 0
+                    ? rankings
+                    : [{ rank: 1, userId: "winner", nickname: winner ?? "Winner" }]
+                  ).map((ranking) => (
+                    <div
+                      key={`${ranking.rank}-${ranking.userId}`}
+                      className="flex items-center justify-between border-[3px] border-black bg-white px-4 py-2 text-base font-black"
+                    >
+                      <span>{ranking.rank}등</span>
+                      <span className={ranking.rank === 1 ? "text-[#11936e]" : "text-[#101014]"}>
+                        {ranking.nickname}
+                      </span>
+                    </div>
+                  ))}
+                </div>
                 <span className="mt-6 text-lg font-bold text-[#5b5b63]">
                   다음 게임까지 {countdown}초
                 </span>
