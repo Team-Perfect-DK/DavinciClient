@@ -76,8 +76,6 @@ export async function joinRoomAsGuest(roomCode: string, guestId: string) {
   return await res.json();
 }
 
-
-
 // 게임 시작 요청 (호스트만 가능)
 export async function startGame(roomCode: string) {
   const res = await fetch(`${API_URL}/rooms/${roomCode}/start`, {
@@ -96,3 +94,20 @@ export async function leaveRoom(roomCode: string, userId: string) {
   if (!res.ok) throw new Error("방을 나갈 수 없습니다.");
 }
 
+export async function deleteRoom(roomCode: string, userId: string) {
+  const res = await fetch(`${API_URL}/rooms/${roomCode}`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ userId }),
+  });
+  if (!res.ok) throw new Error("방을 삭제할 수 없습니다.");
+}
+
+export async function sendRoomHeartbeat(roomCode: string, userId: string) {
+  const res = await fetch(`${API_URL}/rooms/${roomCode}/heartbeat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ userId }),
+  });
+  if (!res.ok) throw new Error("방 활동 상태를 갱신할 수 없습니다.");
+}

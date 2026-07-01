@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter, useParams } from "next/navigation";
-import { fetchRoomByRoomCode, startGame, leaveRoom, joinRoomAsGuest } from "@/app/api/room";
+import { fetchRoomByRoomCode, startGame, leaveRoom, joinRoomAsGuest, sendRoomHeartbeat } from "@/app/api/room";
 import { Client } from "@stomp/stompjs";
 import SockJS from "sockjs-client";
 
@@ -26,6 +26,37 @@ export default function RoomPage() {
   const [stompClient, setStompClient] = useState<Client | null>(null);
 
   const userId = typeof window !== "undefined" ? localStorage.getItem("sessionId") : null;
+
+  useEffect(() => {
+    if (!roomCode || !userId) return;
+
+    const currentRoomCode = Array.isArray(roomCode) ? roomCode[0] : roomCode;
+    const heartbeat = () => {
+      sendRoomHeartbeat(currentRoomCode, userId).catch((err) => {
+        console.error("Room heartbeat failed:", err);
+      });
+    };
+
+    heartbeat();
+    const intervalId = window.setInterval(heartbeat, 2 * 60 * 60 * 1000);
+
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        heartbeat();
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("pageshow", heartbeat);
+    window.addEventListener("online", heartbeat);
+
+    return () => {
+      window.clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("pageshow", heartbeat);
+      window.removeEventListener("online", heartbeat);
+    };
+  }, [roomCode, userId]);
 
   useEffect(() => {
     if (!roomCode || !userId) return;
