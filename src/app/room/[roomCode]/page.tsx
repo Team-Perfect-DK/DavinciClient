@@ -108,11 +108,6 @@ export default function RoomPage() {
   const [isLeavingRoom, setIsLeavingRoom] = useState(false);
   const [dialog, setDialog] = useState<DialogState | null>(null);
 
-  const clearStoredUser = () => {
-    localStorage.removeItem("sessionId");
-    localStorage.removeItem("nickname");
-  };
-
   const countdownRef = useRef<NodeJS.Timeout | null>(null);
   const stompClientRef = useRef<CompatClient | null>(null);
   const prevTurnUserIdRef = useRef<string | null>(null);
@@ -416,8 +411,7 @@ export default function RoomPage() {
           break;
 
         case "ROOM_DELETED":
-          clearStoredUser();
-          router.replace("/");
+          router.replace("/lobby");
           break;
 
         case "GAME_RESET":
@@ -671,8 +665,7 @@ export default function RoomPage() {
       disconnectSocket();
       stompClientRef.current = null;
       setSocketReady(false);
-      clearStoredUser();
-      router.replace("/");
+      router.replace("/lobby");
     }
   };
 
