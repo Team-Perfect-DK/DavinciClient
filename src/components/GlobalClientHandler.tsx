@@ -22,8 +22,10 @@ const GlobalClientHandler = () => {
       const confirmed = window.confirm(confirmMessage);
       if (confirmed) {
         leaveRoom(roomCode, userId).catch(() => { });
+        localStorage.removeItem('sessionId');
+        localStorage.removeItem('nickname');
         disconnectSocket();
-        router.push('/lobby');
+        router.push('/');
         return;
       } else {
         history.pushState(null, '', pathname);
