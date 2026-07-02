@@ -108,6 +108,11 @@ export default function RoomPage() {
   const [isLeavingRoom, setIsLeavingRoom] = useState(false);
   const [dialog, setDialog] = useState<DialogState | null>(null);
 
+  const clearStoredUser = () => {
+    localStorage.removeItem("sessionId");
+    localStorage.removeItem("nickname");
+  };
+
   const countdownRef = useRef<NodeJS.Timeout | null>(null);
   const stompClientRef = useRef<CompatClient | null>(null);
   const prevTurnUserIdRef = useRef<string | null>(null);
@@ -411,7 +416,8 @@ export default function RoomPage() {
           break;
 
         case "ROOM_DELETED":
-          router.push("/lobby");
+          clearStoredUser();
+          router.replace("/");
           break;
 
         case "GAME_RESET":
@@ -449,10 +455,12 @@ export default function RoomPage() {
         setSocketReady(true);
         setHasConnectedOnce(true);
         addLog("서버와 연결되었습니다.", "success");
-        void syncGameState().catch((syncError) => {
-          console.error("Failed to sync game state:", syncError);
-          addLog("게임 상태를 다시 불러오지 못했습니다.", "danger");
-        });
+        if (roomRef.current) {
+          void syncGameState().catch((syncError) => {
+            console.warn("Failed to sync game state:", syncError);
+            addLog("게임 상태를 다시 불러오지 못했습니다.", "danger");
+          });
+        }
       },
       onDisconnect: () => {
         setSocketReady(false);
@@ -508,7 +516,7 @@ export default function RoomPage() {
       if (document.visibilityState !== "visible" || !navigator.onLine) return;
 
       void syncGameState().catch((syncError) => {
-        console.error("Failed to restore game state:", syncError);
+        console.warn("Failed to restore game state:", syncError);
       });
 
       const socket = stompClientRef.current;
@@ -529,12 +537,15 @@ export default function RoomPage() {
   }, [roomCode, syncGameState, userId]);
 
   useEffect(() => {
-    if (!roomCode || !userId) return;
+    if (!roomCode || !userId || !room) return;
+
+    const isRoomMember = userId === room.hostId || userId === room.guestId;
+    if (!isRoomMember) return;
 
     const heartbeat = () => {
       if (document.visibilityState !== "visible" || !navigator.onLine) return;
       void sendRoomHeartbeat(roomCode, userId).catch((heartbeatError) => {
-        console.error("Failed to send room heartbeat:", heartbeatError);
+        console.warn("Failed to send room heartbeat:", heartbeatError);
       });
     };
 
@@ -550,7 +561,7 @@ export default function RoomPage() {
       window.removeEventListener("pageshow", heartbeat);
       window.removeEventListener("online", heartbeat);
     };
-  }, [roomCode, userId]);
+  }, [room, roomCode, userId]);
 
   useEffect(() => {
     if (deckEmpty && isMyTurn && !hasDrawn && room?.status === "PLAYING") {
@@ -660,7 +671,8 @@ export default function RoomPage() {
       disconnectSocket();
       stompClientRef.current = null;
       setSocketReady(false);
-      router.replace("/lobby");
+      clearStoredUser();
+      router.replace("/");
     }
   };
 
