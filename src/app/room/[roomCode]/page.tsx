@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { CompatClient } from "@stomp/stompjs";
+import { validateSession } from "@/app/api/user";
 import {
   fetchGameState,
   fetchRoomByRoomCode,
@@ -147,6 +148,31 @@ export default function RoomPage() {
     setSocketReady(false);
     router.replace("/");
   }, [router]);
+
+  const leaveMissingRoom = useCallback(async () => {
+    const sessionId = localStorage.getItem("sessionId");
+    if (!sessionId) {
+      expireSession();
+      return;
+    }
+
+    try {
+      const isValid = await validateSession(sessionId);
+      if (isValid) {
+        disconnectSocket();
+        stompClientRef.current = null;
+        setSocketReady(false);
+        router.replace("/lobby");
+        return;
+      }
+    } catch (sessionError) {
+      console.warn("Failed to validate session after missing room:", sessionError);
+      router.replace("/lobby");
+      return;
+    }
+
+    expireSession();
+  }, [expireSession, router]);
 
   const getNicknameById = useCallback(
     (id?: string | null) => {
@@ -424,7 +450,7 @@ export default function RoomPage() {
             router.replace("/lobby");
             break;
           }
-          expireSession();
+          void leaveMissingRoom();
           break;
 
         case "GAME_RESET":
@@ -469,7 +495,7 @@ export default function RoomPage() {
               syncError instanceof Error &&
               syncError.message === "ROOM_NOT_FOUND"
             ) {
-              expireSession();
+              void leaveMissingRoom();
               return;
             }
             addLog("게임 상태를 다시 불러오지 못했습니다.", "danger");
@@ -504,7 +530,7 @@ export default function RoomPage() {
       .catch((err) => {
         console.error(err);
         if (err instanceof Error && err.message === "ROOM_NOT_FOUND") {
-          expireSession();
+          void leaveMissingRoom();
           return;
         }
         setError("방 정보를 불러오지 못했습니다.");
@@ -519,7 +545,7 @@ export default function RoomPage() {
     };
   }, [
     addLog,
-    expireSession,
+    leaveMissingRoom,
     roomCode,
     showNotice,
     sortCards,
@@ -539,7 +565,7 @@ export default function RoomPage() {
           syncError instanceof Error &&
           syncError.message === "ROOM_NOT_FOUND"
         ) {
-          expireSession();
+          void leaveMissingRoom();
         }
       });
 
@@ -558,7 +584,7 @@ export default function RoomPage() {
       window.removeEventListener("pageshow", restoreConnection);
       window.removeEventListener("online", restoreConnection);
     };
-  }, [expireSession, roomCode, syncGameState, userId]);
+  }, [leaveMissingRoom, roomCode, syncGameState, userId]);
 
   useEffect(() => {
     if (!roomCode || !userId || !room) return;
@@ -576,7 +602,7 @@ export default function RoomPage() {
               heartbeatRoomError instanceof Error &&
               heartbeatRoomError.message === "ROOM_NOT_FOUND"
             ) {
-              expireSession();
+              void leaveMissingRoom();
             }
           });
         })
@@ -595,7 +621,7 @@ export default function RoomPage() {
       window.removeEventListener("pageshow", heartbeat);
       window.removeEventListener("online", heartbeat);
     };
-  }, [expireSession, room, roomCode, userId]);
+  }, [leaveMissingRoom, room, roomCode, userId]);
 
   useEffect(() => {
     if (deckEmpty && isMyTurn && !hasDrawn && room?.status === "PLAYING") {
