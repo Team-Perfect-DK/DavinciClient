@@ -68,12 +68,6 @@ interface DialogState {
 
 const TOTAL_DECK_SIZE = 24;
 const GUESS_NUMBERS = Array.from({ length: 12 }, (_, index) => index);
-const ROOM_FETCH_RETRY_COUNT = 5;
-const ROOM_FETCH_RETRY_DELAY_MS = 300;
-
-function delay(ms: number) {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
-}
 
 export default function RoomPage() {
   const router = useRouter();
