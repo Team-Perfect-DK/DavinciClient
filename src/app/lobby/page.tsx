@@ -12,7 +12,9 @@ interface Room {
   title: string;
   roomCode: string;
   status: "WAITING" | "PLAYING";
+  hostId?: string | null;
   hostNickname: string;
+  guestId?: string | null;
   guestNickname?: string | null;
 }
 
@@ -22,6 +24,7 @@ export default function Lobby() {
   const [error, setError] = useState("");
   const [socketError, setSocketError] = useState("");
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isCreatingRoom, setIsCreatingRoom] = useState(false);
   const [roomTitle, setRoomTitle] = useState("");
   const [stompClient, setStompClient] = useState<Client | null>(null);
   const router = useRouter();
@@ -94,6 +97,8 @@ export default function Lobby() {
   }, [router]);
 
   const handleCreateRoom = async () => {
+    if (isCreatingRoom) return;
+
     const title = roomTitle.trim();
     if (!title) {
       setError("방 이름을 입력해주세요.");
@@ -101,7 +106,11 @@ export default function Lobby() {
     }
 
     try {
+      setIsCreatingRoom(true);
       const newRoom = await createRoom(title);
+      if (!newRoom?.roomCode) {
+        throw new Error("ROOM_CODE_MISSING");
+      }
       sessionStorage.setItem(
         `pending-room:${newRoom.roomCode}`,
         JSON.stringify(newRoom)
@@ -109,8 +118,9 @@ export default function Lobby() {
       setRooms((prev) => [...prev, newRoom]);
       setRoomTitle("");
       setIsModalOpen(false);
-      router.push(`/room/${newRoom.roomCode}`);
+      window.location.assign(`/room/${newRoom.roomCode}`);
     } catch (createError) {
+      setIsCreatingRoom(false);
       if (
         createError instanceof Error &&
         createError.message === "SESSION_EXPIRED"
@@ -131,9 +141,15 @@ export default function Lobby() {
       return;
     }
 
+    const isOwnRoom = room.hostId === userId || room.guestId === userId;
     const isFull = room.status === "WAITING" && !!room.guestNickname;
     const isPlaying = room.status === "PLAYING";
-    if (isFull || isPlaying) return;
+    if (!isOwnRoom && (isFull || isPlaying)) return;
+
+    if (isOwnRoom) {
+      router.push(`/room/${room.roomCode}`);
+      return;
+    }
 
     if (stompClient?.connected) {
       stompClient.publish({
@@ -196,9 +212,15 @@ export default function Lobby() {
           ) : rooms.length > 0 ? (
             <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
               {rooms.map((room, index) => {
+                const userId =
+                  typeof window !== "undefined"
+                    ? localStorage.getItem("sessionId")
+                    : null;
+                const isOwnRoom =
+                  !!userId && (room.hostId === userId || room.guestId === userId);
                 const isFull = room.status === "WAITING" && !!room.guestNickname;
                 const isPlaying = room.status === "PLAYING";
-                const canEnter = !isFull && !isPlaying;
+                const canEnter = isOwnRoom || (!isFull && !isPlaying);
 
                 return (
                   <article
@@ -278,6 +300,7 @@ export default function Lobby() {
               </button>
               <button
                 className="border-[3px] border-black bg-black px-5 py-3 text-sm font-black text-white shadow-[4px_4px_0_#11936e]"
+                disabled={isCreatingRoom}
                 onClick={handleCreateRoom}
               >
                 생성
