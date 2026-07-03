@@ -68,6 +68,33 @@ interface DialogState {
 
 const TOTAL_DECK_SIZE = 24;
 const GUESS_NUMBERS = Array.from({ length: 12 }, (_, index) => index);
+const ROOM_FETCH_RETRY_COUNT = 5;
+const ROOM_FETCH_RETRY_DELAY_MS = 300;
+
+const delay = (ms: number) =>
+  new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+
+async function fetchRoomByRoomCodeWithRetry(roomCode: string) {
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < ROOM_FETCH_RETRY_COUNT; attempt += 1) {
+    try {
+      return await fetchRoomByRoomCode(roomCode);
+    } catch (error) {
+      lastError = error;
+      if (!(error instanceof Error) || error.message !== "ROOM_NOT_FOUND") {
+        throw error;
+      }
+      if (attempt < ROOM_FETCH_RETRY_COUNT - 1) {
+        await delay(ROOM_FETCH_RETRY_DELAY_MS);
+      }
+    }
+  }
+
+  throw lastError;
+}
 
 export default function RoomPage() {
   const router = useRouter();
@@ -529,7 +556,7 @@ export default function RoomPage() {
       }
     }
 
-    fetchRoomByRoomCode(roomCode)
+    fetchRoomByRoomCodeWithRetry(roomCode)
       .then(async (data) => {
         if (!data) throw new Error("방 정보를 찾을 수 없습니다.");
         let finalRoom: Room;
@@ -618,7 +645,7 @@ export default function RoomPage() {
       void sendRoomHeartbeat(roomCode, userId)
         .then((ok) => {
           if (ok) return;
-          void fetchRoomByRoomCode(roomCode).catch((heartbeatRoomError) => {
+          void fetchRoomByRoomCodeWithRetry(roomCode).catch((heartbeatRoomError) => {
             if (
               heartbeatRoomError instanceof Error &&
               heartbeatRoomError.message === "ROOM_NOT_FOUND"
