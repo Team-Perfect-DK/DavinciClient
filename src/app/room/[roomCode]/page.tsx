@@ -420,6 +420,10 @@ export default function RoomPage() {
           break;
 
         case "ROOM_DELETED":
+          if (isLeavingRoomRef.current) {
+            router.replace("/lobby");
+            break;
+          }
           expireSession();
           break;
 
