@@ -566,7 +566,15 @@ export default function RoomPage() {
       if (document.visibilityState !== "visible" || !navigator.onLine) return;
       void sendRoomHeartbeat(roomCode, userId)
         .then((ok) => {
-          if (!ok) expireSession();
+          if (ok) return;
+          void fetchRoomByRoomCode(roomCode).catch((heartbeatRoomError) => {
+            if (
+              heartbeatRoomError instanceof Error &&
+              heartbeatRoomError.message === "ROOM_NOT_FOUND"
+            ) {
+              expireSession();
+            }
+          });
         })
         .catch((heartbeatError) => {
           console.warn("Failed to send room heartbeat:", heartbeatError);
