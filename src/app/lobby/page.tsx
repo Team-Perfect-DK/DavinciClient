@@ -102,6 +102,10 @@ export default function Lobby() {
 
     try {
       const newRoom = await createRoom(title);
+      sessionStorage.setItem(
+        `pending-room:${newRoom.roomCode}`,
+        JSON.stringify(newRoom)
+      );
       setRooms((prev) => [...prev, newRoom]);
       setRoomTitle("");
       setIsModalOpen(false);
