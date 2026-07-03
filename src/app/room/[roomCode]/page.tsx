@@ -68,6 +68,12 @@ interface DialogState {
 
 const TOTAL_DECK_SIZE = 24;
 const GUESS_NUMBERS = Array.from({ length: 12 }, (_, index) => index);
+const ROOM_FETCH_RETRY_COUNT = 5;
+const ROOM_FETCH_RETRY_DELAY_MS = 300;
+
+function delay(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
 
 export default function RoomPage() {
   const router = useRouter();
@@ -513,6 +519,22 @@ export default function RoomPage() {
     });
     stompClientRef.current = client;
 
+    const pendingRoomKey = `pending-room:${roomCode}`;
+    const pendingRoomJson = sessionStorage.getItem(pendingRoomKey);
+    let hasPendingRoom = false;
+    if (pendingRoomJson) {
+      try {
+        const pendingRoom = JSON.parse(pendingRoomJson) as Room;
+        if (pendingRoom.roomCode === roomCode) {
+          hasPendingRoom = true;
+          setRoom(pendingRoom);
+          setLoading(false);
+        }
+      } catch {
+        sessionStorage.removeItem(pendingRoomKey);
+      }
+    }
+
     fetchRoomByRoomCode(roomCode)
       .then(async (data) => {
         if (!data) throw new Error("방 정보를 찾을 수 없습니다.");
@@ -524,12 +546,17 @@ export default function RoomPage() {
         } else {
           finalRoom = data as Room;
         }
+        sessionStorage.removeItem(pendingRoomKey);
         setRoom(finalRoom);
         setLoading(false);
       })
       .catch((err) => {
         console.error(err);
         if (err instanceof Error && err.message === "ROOM_NOT_FOUND") {
+          if (hasPendingRoom) {
+            setLoading(false);
+            return;
+          }
           void leaveMissingRoom();
           return;
         }
