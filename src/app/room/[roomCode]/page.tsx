@@ -237,6 +237,22 @@ export default function RoomPage() {
     );
   }, [roomCode, sortCards, userId]);
 
+  const handleMissingGameState = useCallback(async () => {
+    if (!roomCode) {
+      await leaveMissingRoom();
+      return;
+    }
+
+    const latestRoom = await fetchRoomByRoomCodeWithRetry(roomCode);
+    if (latestRoom) {
+      setRoom(latestRoom as Room);
+      setLoading(false);
+      return;
+    }
+
+    await leaveMissingRoom();
+  }, [leaveMissingRoom, roomCode]);
+
   const myNickname = useMemo(() => {
     if (!room || !userId) return "나";
     return userId === room.hostId
@@ -515,14 +531,14 @@ export default function RoomPage() {
         setSocketReady(true);
         setHasConnectedOnce(true);
         addLog("서버와 연결되었습니다.", "success");
-        if (roomRef.current) {
+        if (roomRef.current && roomRef.current.status !== "WAITING") {
           void syncGameState().catch((syncError) => {
             console.warn("Failed to sync game state:", syncError);
             if (
               syncError instanceof Error &&
               syncError.message === "ROOM_NOT_FOUND"
             ) {
-              void leaveMissingRoom();
+              void handleMissingGameState();
               return;
             }
             addLog("게임 상태를 다시 불러오지 못했습니다.", "danger");
@@ -593,6 +609,7 @@ export default function RoomPage() {
     };
   }, [
     addLog,
+    handleMissingGameState,
     leaveMissingRoom,
     roomCode,
     showNotice,
@@ -606,6 +623,7 @@ export default function RoomPage() {
 
     const restoreConnection = () => {
       if (document.visibilityState !== "visible" || !navigator.onLine) return;
+      if (roomRef.current?.status === "WAITING") return;
 
       void syncGameState().catch((syncError) => {
         console.warn("Failed to restore game state:", syncError);
@@ -613,7 +631,7 @@ export default function RoomPage() {
           syncError instanceof Error &&
           syncError.message === "ROOM_NOT_FOUND"
         ) {
-          void leaveMissingRoom();
+          void handleMissingGameState();
         }
       });
 
@@ -632,7 +650,7 @@ export default function RoomPage() {
       window.removeEventListener("pageshow", restoreConnection);
       window.removeEventListener("online", restoreConnection);
     };
-  }, [leaveMissingRoom, roomCode, syncGameState, userId]);
+  }, [handleMissingGameState, roomCode, syncGameState, userId]);
 
   useEffect(() => {
     if (!roomCode || !userId || !room) return;
