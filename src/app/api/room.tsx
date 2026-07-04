@@ -66,6 +66,9 @@ export async function fetchGameState(roomCode: string): Promise<GameState> {
   const response = await fetch(`${API_URL}/rooms/${roomCode}/state`, {
     cache: "no-store",
   });
+  if (response.status === 404) {
+    throw new Error("ROOM_NOT_FOUND");
+  }
   if (!response.ok) {
     throw new Error("게임 상태를 불러오는 데 실패했습니다.");
   }
@@ -75,6 +78,9 @@ export async function fetchGameState(roomCode: string): Promise<GameState> {
 
 export async function fetchRoomByRoomCode(roomCode: string): Promise<Room | null> {
   const response = await fetch(`${API_URL}/rooms/${roomCode}`);
+  if (response.status === 404) {
+    throw new Error("ROOM_NOT_FOUND");
+  }
   if (!response.ok) {
     console.error("방 정보를 불러오는 데 실패했습니다.");
     return null;
@@ -105,6 +111,13 @@ export async function joinRoomAsGuest(roomCode: string, guestId: string) {
   return await res.json();
 }
 
+// 게임 시작 요청 (호스트만 가능)
+export async function startGame(roomCode: string) {
+  const res = await fetch(`${API_URL}/rooms/${roomCode}/start`, {
+    method: "POST",
+  });
+  if (!res.ok) throw new Error("게임을 시작할 수 없습니다.");
+}
 
 // 방 나가기 요청
 export async function leaveRoom(roomCode: string, userId: string) {
@@ -116,12 +129,27 @@ export async function leaveRoom(roomCode: string, userId: string) {
   if (!res.ok) throw new Error("방을 나갈 수 없습니다.");
 }
 
+export async function deleteRoom(roomCode: string, userId: string) {
+  const res = await fetch(`${API_URL}/rooms/${roomCode}`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ userId }),
+  });
+  if (!res.ok) throw new Error("방을 삭제할 수 없습니다.");
+}
+
 export async function sendRoomHeartbeat(roomCode: string, userId: string) {
   const res = await fetch(`${API_URL}/rooms/${roomCode}/heartbeat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ userId }),
   });
-  if (!res.ok) throw new Error("방 연결 상태를 갱신할 수 없습니다.");
+  if (res.status === 404) {
+    return false;
+  }
+  if (!res.ok) {
+    throw new Error("ROOM_HEARTBEAT_FAILED");
+  }
+  return res.ok;
 }
 

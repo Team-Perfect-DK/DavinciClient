@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { CompatClient } from "@stomp/stompjs";
+import { validateSession } from "@/app/api/user";
 import {
   fetchGameState,
   fetchRoomByRoomCode,
@@ -67,6 +68,33 @@ interface DialogState {
 
 const TOTAL_DECK_SIZE = 24;
 const GUESS_NUMBERS = Array.from({ length: 12 }, (_, index) => index);
+const ROOM_FETCH_RETRY_COUNT = 5;
+const ROOM_FETCH_RETRY_DELAY_MS = 300;
+
+const delay = (ms: number) =>
+  new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+
+async function fetchRoomByRoomCodeWithRetry(roomCode: string) {
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < ROOM_FETCH_RETRY_COUNT; attempt += 1) {
+    try {
+      return await fetchRoomByRoomCode(roomCode);
+    } catch (error) {
+      lastError = error;
+      if (!(error instanceof Error) || error.message !== "ROOM_NOT_FOUND") {
+        throw error;
+      }
+      if (attempt < ROOM_FETCH_RETRY_COUNT - 1) {
+        await delay(ROOM_FETCH_RETRY_DELAY_MS);
+      }
+    }
+  }
+
+  throw lastError;
+}
 
 export default function RoomPage() {
   const router = useRouter();
@@ -138,6 +166,40 @@ export default function RoomPage() {
       confirmText: "확인",
     });
   }, []);
+
+  const expireSession = useCallback(() => {
+    localStorage.removeItem("sessionId");
+    localStorage.removeItem("nickname");
+    disconnectSocket();
+    stompClientRef.current = null;
+    setSocketReady(false);
+    router.replace("/");
+  }, [router]);
+
+  const leaveMissingRoom = useCallback(async () => {
+    const sessionId = localStorage.getItem("sessionId");
+    if (!sessionId) {
+      expireSession();
+      return;
+    }
+
+    try {
+      const isValid = await validateSession(sessionId);
+      if (isValid) {
+        disconnectSocket();
+        stompClientRef.current = null;
+        setSocketReady(false);
+        router.replace("/lobby");
+        return;
+      }
+    } catch (sessionError) {
+      console.warn("Failed to validate session after missing room:", sessionError);
+      router.replace("/lobby");
+      return;
+    }
+
+    expireSession();
+  }, [expireSession, router]);
 
   const getNicknameById = useCallback(
     (id?: string | null) => {
@@ -411,7 +473,11 @@ export default function RoomPage() {
           break;
 
         case "ROOM_DELETED":
-          router.push("/lobby");
+          if (isLeavingRoomRef.current) {
+            router.replace("/lobby");
+            break;
+          }
+          void leaveMissingRoom();
           break;
 
         case "GAME_RESET":
@@ -449,10 +515,19 @@ export default function RoomPage() {
         setSocketReady(true);
         setHasConnectedOnce(true);
         addLog("서버와 연결되었습니다.", "success");
-        void syncGameState().catch((syncError) => {
-          console.error("Failed to sync game state:", syncError);
-          addLog("게임 상태를 다시 불러오지 못했습니다.", "danger");
-        });
+        if (roomRef.current) {
+          void syncGameState().catch((syncError) => {
+            console.warn("Failed to sync game state:", syncError);
+            if (
+              syncError instanceof Error &&
+              syncError.message === "ROOM_NOT_FOUND"
+            ) {
+              void leaveMissingRoom();
+              return;
+            }
+            addLog("게임 상태를 다시 불러오지 못했습니다.", "danger");
+          });
+        }
       },
       onDisconnect: () => {
         setSocketReady(false);
@@ -465,7 +540,23 @@ export default function RoomPage() {
     });
     stompClientRef.current = client;
 
-    fetchRoomByRoomCode(roomCode)
+    const pendingRoomKey = `pending-room:${roomCode}`;
+    const pendingRoomJson = sessionStorage.getItem(pendingRoomKey);
+    let hasPendingRoom = false;
+    if (pendingRoomJson) {
+      try {
+        const pendingRoom = JSON.parse(pendingRoomJson) as Room;
+        if (pendingRoom.roomCode === roomCode) {
+          hasPendingRoom = true;
+          setRoom(pendingRoom);
+          setLoading(false);
+        }
+      } catch {
+        sessionStorage.removeItem(pendingRoomKey);
+      }
+    }
+
+    fetchRoomByRoomCodeWithRetry(roomCode)
       .then(async (data) => {
         if (!data) throw new Error("방 정보를 찾을 수 없습니다.");
         let finalRoom: Room;
@@ -476,11 +567,20 @@ export default function RoomPage() {
         } else {
           finalRoom = data as Room;
         }
+        sessionStorage.removeItem(pendingRoomKey);
         setRoom(finalRoom);
         setLoading(false);
       })
       .catch((err) => {
         console.error(err);
+        if (err instanceof Error && err.message === "ROOM_NOT_FOUND") {
+          if (hasPendingRoom) {
+            setLoading(false);
+            return;
+          }
+          void leaveMissingRoom();
+          return;
+        }
         setError("방 정보를 불러오지 못했습니다.");
         setLoading(false);
       });
@@ -493,8 +593,8 @@ export default function RoomPage() {
     };
   }, [
     addLog,
+    leaveMissingRoom,
     roomCode,
-    router,
     showNotice,
     sortCards,
     syncGameState,
@@ -508,7 +608,13 @@ export default function RoomPage() {
       if (document.visibilityState !== "visible" || !navigator.onLine) return;
 
       void syncGameState().catch((syncError) => {
-        console.error("Failed to restore game state:", syncError);
+        console.warn("Failed to restore game state:", syncError);
+        if (
+          syncError instanceof Error &&
+          syncError.message === "ROOM_NOT_FOUND"
+        ) {
+          void leaveMissingRoom();
+        }
       });
 
       const socket = stompClientRef.current;
@@ -526,31 +632,44 @@ export default function RoomPage() {
       window.removeEventListener("pageshow", restoreConnection);
       window.removeEventListener("online", restoreConnection);
     };
-  }, [roomCode, syncGameState, userId]);
+  }, [leaveMissingRoom, roomCode, syncGameState, userId]);
 
   useEffect(() => {
-    if (!roomCode || !userId) return;
+    if (!roomCode || !userId || !room) return;
+
+    const isRoomMember = userId === room.hostId || userId === room.guestId;
+    if (!isRoomMember) return;
 
     const heartbeat = () => {
       if (document.visibilityState !== "visible" || !navigator.onLine) return;
-      void sendRoomHeartbeat(roomCode, userId).catch((heartbeatError) => {
-        console.error("Failed to send room heartbeat:", heartbeatError);
-      });
+      void sendRoomHeartbeat(roomCode, userId)
+        .then((ok) => {
+          if (ok) return;
+          void fetchRoomByRoomCodeWithRetry(roomCode).catch((heartbeatRoomError) => {
+            if (
+              heartbeatRoomError instanceof Error &&
+              heartbeatRoomError.message === "ROOM_NOT_FOUND"
+            ) {
+              void leaveMissingRoom();
+            }
+          });
+        })
+        .catch((heartbeatError) => {
+          console.warn("Failed to send room heartbeat:", heartbeatError);
+        });
     };
 
     heartbeat();
-    const intervalId = window.setInterval(heartbeat, 2 * 60 * 60 * 1000);
     document.addEventListener("visibilitychange", heartbeat);
     window.addEventListener("pageshow", heartbeat);
     window.addEventListener("online", heartbeat);
 
     return () => {
-      window.clearInterval(intervalId);
       document.removeEventListener("visibilitychange", heartbeat);
       window.removeEventListener("pageshow", heartbeat);
       window.removeEventListener("online", heartbeat);
     };
-  }, [roomCode, userId]);
+  }, [leaveMissingRoom, room, roomCode, userId]);
 
   useEffect(() => {
     if (deckEmpty && isMyTurn && !hasDrawn && room?.status === "PLAYING") {
