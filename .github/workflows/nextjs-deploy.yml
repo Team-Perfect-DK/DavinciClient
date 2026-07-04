@@ -24,7 +24,8 @@ jobs:
             set -e
             cd /davinci/DavinciClient
             git switch main
-            git pull origin main
+            git fetch origin main
+            git reset --hard origin/main
 
             docker compose down --remove-orphans || true
             docker rm -f davinci-nextjs || true
